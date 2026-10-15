@@ -28,9 +28,11 @@ export function applyAdjustments(canvas, adj) {
   const bri = adj.brightness || 0
   const con = (adj.contrast || 0) / 100
   const sat = 1 + (adj.saturation || 0) / 100
+  const vib = (adj.vibrance || 0) / 100
   const hue = ((adj.hue || 0) / 180) * Math.PI
   const exp = Math.pow(2, (adj.exposure || 0) / 100)
-  const gam = adj.gamma || 1
+  const gamRaw = adj.gamma == null ? 1 : adj.gamma
+  const gam = gamRaw > 5 ? gamRaw / 100 : (gamRaw || 1)
   const temp = adj.temperature || 0
   const tint = adj.tint || 0
   const high = adj.highlights || 0
@@ -54,9 +56,10 @@ export function applyAdjustments(canvas, adj) {
     b -= temp * 0.6
     g += tint * 0.4
     const L = lum(r, g, b)
-    r = L + (r - L) * sat
-    g = L + (g - L) * sat
-    b = L + (b - L) * sat
+    const satAmt = sat + vib * (1 - Math.min(r, g, b) / 255)
+    r = L + (r - L) * satAmt
+    g = L + (g - L) * satAmt
+    b = L + (b - L) * satAmt
     if (hue) {
       const nr = r * (0.213 + cosH * 0.787 - sinH * 0.213) + g * (0.715 - cosH * 0.715 - sinH * 0.715) + b * (0.072 - cosH * 0.072 + sinH * 0.928)
       const ng = r * (0.213 - cosH * 0.213 + sinH * 0.143) + g * (0.715 + cosH * 0.285 + sinH * 0.140) + b * (0.072 - cosH * 0.072 - sinH * 0.283)
@@ -268,7 +271,8 @@ export const FILTER_MENU = [
   { id: 'sepia', label: 'Sepia' },
   { id: 'posterize', label: 'Posterize' },
   { id: 'threshold', label: 'Threshold' },
-  { id: 'blur', label: 'Gaussian Blur' },
+  { id: 'blur', label: 'Blur' },
+  { id: 'oil', label: 'Oil Paint' },
   { id: 'sharpen', label: 'Sharpen' },
   { id: 'emboss', label: 'Emboss' },
   { id: 'edge', label: 'Find Edges' },

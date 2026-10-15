@@ -1,4 +1,4 @@
-import { BLEND_MODES, BLEND_LABELS } from './engine.js'
+import { BLEND_MODES, BLEND_LABELS, fxActive } from './engine.js'
 import { TOOL_GROUPS, ICONS, toolById, groupForTool } from './tools.js'
 import { FILTER_MENU } from './filters.js'
 
@@ -66,6 +66,8 @@ export function buildMenus(app) {
         { label: 'Open…', kbd: 'Ctrl+O', fn: () => app.openFile() },
         { label: 'Place Embedded…', fn: () => app.placeFile() },
         { hr: true },
+        { label: 'Save Project', kbd: 'Ctrl+S', fn: () => app.saveProject() },
+        { label: 'Export Image…', kbd: 'Ctrl+Shift+S', fn: () => app.exportDialog() },
         { label: 'Export as PNG', fn: () => app.exportImage('png') },
         { label: 'Export as JPEG', fn: () => app.exportImage('jpeg') },
         { label: 'Export as WEBP', fn: () => app.exportImage('webp') }
@@ -81,6 +83,8 @@ export function buildMenus(app) {
         { label: 'Copy', kbd: 'Ctrl+C', fn: () => app.copy() },
         { label: 'Paste as New Layer', kbd: 'Ctrl+V', fn: () => app.paste() },
         { hr: true },
+        { label: 'Fill…', kbd: 'Shift+F5', fn: () => app.fillDialog() },
+        { label: 'Stroke…', fn: () => app.strokeDialog() },
         { label: 'Fill with Foreground', kbd: 'Alt+Backspace', fn: () => app.doc.fillSelection(app.doc.fg) },
         { label: 'Fill with Background', kbd: 'Ctrl+Backspace', fn: () => app.doc.fillSelection(app.doc.bg) },
         { label: 'Clear', kbd: 'Del', fn: () => app.doc.clearSelection() },
@@ -92,7 +96,7 @@ export function buildMenus(app) {
       name: 'Image',
       items: [
         { label: 'Image Size…', fn: () => app.imageSizeDialog() },
-        { label: 'Canvas Size…', fn: () => app.imageSizeDialog() },
+        { label: 'Canvas Size…', fn: () => app.canvasSizeDialog() },
         { label: 'Crop', fn: () => app.cropSelection() },
         { hr: true },
         { label: 'Image Rotation 90° CW', fn: () => app.rotate(90) },
@@ -108,9 +112,12 @@ export function buildMenus(app) {
         { label: 'New Layer', kbd: 'Ctrl+Shift+N', fn: () => { app.doc.addLayer(); app.doc.pushHistory('New Layer'); app.render() } },
         { label: 'New Fill Layer', fn: () => app.doc.addFillLayer(app.doc.fg) },
         { label: 'Duplicate Layer', kbd: 'Ctrl+J', fn: () => app.doc.duplicateLayer() },
-        { label: 'Layer via Copy', kbd: 'Ctrl+J', fn: () => app.doc.layerViaCopy(false) },
+        { label: 'Layer via Copy', kbd: 'Ctrl+Shift+J', fn: () => app.doc.layerViaCopy(false) },
         { label: 'Layer via Cut', kbd: 'Ctrl+Shift+J', fn: () => app.doc.layerViaCopy(true) },
         { label: 'Delete Layer', kbd: 'Del', fn: () => app.doc.deleteLayer() },
+        { hr: true },
+        { label: 'Group Layers', kbd: 'Ctrl+G', fn: () => { app.doc.groupSelected(); app.render() } },
+        { label: 'Ungroup Layers', kbd: 'Ctrl+Shift+G', fn: () => { app.doc.ungroup(); app.render() } },
         { hr: true },
         { label: 'Add Layer Mask', fn: () => app.doc.addMask() },
         { label: 'Delete Layer Mask', fn: () => app.doc.deleteMask() },
@@ -118,10 +125,11 @@ export function buildMenus(app) {
         { label: 'Disable/Enable Mask', fn: () => app.doc.disableMask() },
         { label: 'Create Clipping Mask', kbd: 'Ctrl+Alt+G', fn: () => app.doc.toggleClip() },
         { hr: true },
-        { label: 'Drop Shadow', fn: () => app.doc.toggleFx('shadow') },
-        { label: 'Outer Glow', fn: () => app.doc.toggleFx('glow') },
-        { label: 'Stroke', fn: () => app.doc.toggleFx('stroke') },
-        { label: 'Color Overlay', fn: () => app.doc.toggleFx('overlay') },
+        { label: 'Layer Style…', fn: () => app.layerStyleDialog() },
+        { label: 'Drop Shadow', fn: () => app.layerStyleDialog('shadow') },
+        { label: 'Stroke', fn: () => app.layerStyleDialog('stroke') },
+        { label: 'Color Overlay', fn: () => app.layerStyleDialog('overlay') },
+        { label: 'Outer Glow', fn: () => app.layerStyleDialog('glow') },
         { hr: true },
         { label: 'Merge Down', kbd: 'Ctrl+E', fn: () => app.doc.mergeDown() },
         { label: 'Merge Visible', kbd: 'Ctrl+Shift+E', fn: () => app.doc.mergeVisible() },
@@ -142,7 +150,7 @@ export function buildMenus(app) {
         { label: 'All', kbd: 'Ctrl+A', fn: () => app.selectAll() },
         { label: 'Deselect', kbd: 'Ctrl+D', fn: () => { app.doc.selection = null; app.render(); app.renderOverlay() } },
         { label: 'Inverse', kbd: 'Ctrl+Shift+I', fn: () => app.invertSelection() },
-        { label: 'Transform Selection', fn: () => app.toast('Drag selection edges with Marquee') }
+        { label: 'Transform Selection', fn: () => { app.tools.state.selXf = true; app.setTool('marquee'); app.renderOverlay() } }
       ]
     },
     {
@@ -156,7 +164,7 @@ export function buildMenus(app) {
         { label: 'Zoom Out', kbd: 'Ctrl + -', fn: () => app.setZoom(app.doc.zoom * 0.8) },
         { label: 'Fit The Area', kbd: 'Ctrl + 0', fn: () => app.fitZoom() },
         { label: 'Pixel to Pixel', kbd: 'Ctrl + 1', fn: () => app.setZoom(1) },
-        { label: 'Pattern Preview', fn: () => app.toast('Pattern Preview is not available') },
+        { label: 'Pattern Preview', dim: true, fn: () => {} },
         { hr: true },
         {
           label: 'Mode',
@@ -241,7 +249,7 @@ export function buildMenus(app) {
       ]
     },
     {
-      name: 'More',
+      name: 'Help',
       items: [
         { label: 'Keyboard Shortcuts', fn: () => app.helpDialog() },
         { label: 'Reset Workspace', fn: () => app.resetWorkspace() },
@@ -404,7 +412,8 @@ export function renderOptions(app) {
       </select></div>`)
     parts.push(`<div class="opt"><label>Size</label><input id="opt-fs" type="number" min="8" max="400" value="${s.fontSize}"></div>`)
     parts.push(`<div class="opt"><label><input id="opt-bold" type="checkbox"${s.textBold ? ' checked' : ''}> Bold</label></div>`)
-    parts.push(`<div class="opt">Click canvas, type on image, Enter to place</div>`)
+    parts.push(`<div class="opt"><label><input id="opt-italic" type="checkbox"${s.textItalic ? ' checked' : ''}> Italic</label></div>`)
+    parts.push(`<div class="opt">Click to type a new layer · double-click a T layer to re-edit · Enter to commit</div>`)
   }
   if (['wand', 'fill', 'magic-eraser'].includes(tool)) {
     parts.push(`<div class="opt"><label>Tolerance</label><input id="opt-tol" type="range" min="0" max="120" value="${s.wandTol}"><span>${s.wandTol}</span></div>`)
@@ -413,6 +422,7 @@ export function renderOptions(app) {
     parts.push(`<div class="opt"><label><input id="opt-auto" type="checkbox"${s.autoSelect ? ' checked' : ''}> Auto-Select</label></div>`)
     parts.push(`<div class="opt"><select id="opt-auto-kind"><option>Layer</option><option>Group</option></select></div>`)
     parts.push(`<div class="opt"><label><input id="opt-xf" type="checkbox"${s.showTransform ? ' checked' : ''}> Transform controls</label></div>`)
+    parts.push(`<div class="opt">Drag handles to scale · top circle to rotate · Shift constrain</div>`)
     parts.push(`<div class="opt"><label><input id="opt-dist" type="checkbox"${s.showDistances ? ' checked' : ''}> Distances</label></div>`)
     parts.push(`<div class="sep"></div>`)
     parts.push(`<div class="opt align-btns">
@@ -428,8 +438,8 @@ export function renderOptions(app) {
       <button type="button" data-dist="v" title="Distribute Vertically">⋮</button>
     </div>`)
   }
-  if (tool === 'marquee' || tool === 'ellipse-marquee') parts.push(`<div class="opt">Shift+click add · Alt+click subtract · Shift drag square · Alt drag from center</div>`)
-  if (tool === 'crop') parts.push(`<div class="opt">Drag crop box, then Enter to apply, Esc to cancel</div>`)
+  if (tool === 'marquee' || tool === 'ellipse-marquee') parts.push(`<div class="opt">Drag handles to transform selection · Shift+click add · Alt subtract · Shift square</div>`)
+  if (tool === 'crop') parts.push(`<div class="opt">Drag crop box, resize handles, Enter to apply, Esc to cancel</div>`)
   if (tool === 'clone') parts.push(`<div class="opt">Alt-click to set source, then paint</div>`)
   if (tool === 'fill') parts.push(`<div class="opt">Click an area to fill with foreground</div>`)
   if (tool === 'eyedropper') parts.push(`<div class="opt">Click: foreground · Shift-click: background</div>`)
@@ -442,9 +452,22 @@ export function renderOptions(app) {
   bar.querySelector('#opt-fill')?.addEventListener('change', e => { s.fillOn = e.target.checked })
   bar.querySelector('#opt-stroke')?.addEventListener('change', e => { s.strokeOn = e.target.checked })
   bar.querySelector('#opt-grad')?.addEventListener('change', e => { s.gradientType = e.target.value })
-  bar.querySelector('#opt-font')?.addEventListener('change', e => { s.fontFamily = e.target.value })
-  bar.querySelector('#opt-fs')?.addEventListener('input', e => { s.fontSize = +e.target.value })
-  bar.querySelector('#opt-bold')?.addEventListener('change', e => { s.textBold = e.target.checked })
+  bar.querySelector('#opt-font')?.addEventListener('change', e => {
+    s.fontFamily = e.target.value
+    if (app._textEdit) { app._textEdit.font = app.textFont(); app.syncTextLayer(); app.renderOverlay() }
+  })
+  bar.querySelector('#opt-fs')?.addEventListener('input', e => {
+    s.fontSize = +e.target.value
+    if (app._textEdit) { app._textEdit.font = app.textFont(); app.syncTextLayer(); app.renderOverlay() }
+  })
+  bar.querySelector('#opt-bold')?.addEventListener('change', e => {
+    s.textBold = e.target.checked
+    if (app._textEdit) { app._textEdit.font = app.textFont(); app.syncTextLayer(); app.renderOverlay() }
+  })
+  bar.querySelector('#opt-italic')?.addEventListener('change', e => {
+    s.textItalic = e.target.checked
+    if (app._textEdit) { app._textEdit.font = app.textFont(); app.syncTextLayer(); app.renderOverlay() }
+  })
   bar.querySelector('#opt-tol')?.addEventListener('input', e => {
     s.wandTol = +e.target.value
     e.target.nextElementSibling.textContent = e.target.value
@@ -479,16 +502,18 @@ function showLayerMenu(app, i, x, y) {
     ['Duplicate Layer', () => app.doc.duplicateLayer()],
     ['Delete Layer', () => app.doc.deleteLayer()],
     null,
+    ['Group Layers', () => app.doc.groupSelected()],
+    layer?.kind === 'group' ? ['Ungroup Layers', () => app.doc.ungroup(i)] : null,
+    null,
     ['Add Layer Mask', () => app.doc.addMask()],
     layer?.mask ? ['Delete Layer Mask', () => app.doc.deleteMask()] : null,
     layer?.mask ? ['Apply Layer Mask', () => app.doc.applyMask()] : null,
     layer?.mask ? [(layer.maskEnabled === false ? 'Enable Mask' : 'Disable Mask'), () => app.doc.disableMask()] : null,
     [layer?.clip ? 'Release Clipping Mask' : 'Create Clipping Mask', () => app.doc.toggleClip()],
     null,
-    ['Drop Shadow', () => app.doc.toggleFx('shadow')],
-    ['Outer Glow', () => app.doc.toggleFx('glow')],
-    ['Stroke', () => app.doc.toggleFx('stroke')],
-    ['Color Overlay', () => app.doc.toggleFx('overlay')],
+    ['Layer Style…', () => app.layerStyleDialog()],
+    ['Stroke…', () => app.strokeDialog()],
+    ['Fill…', () => app.fillDialog()],
     null,
     ['Merge Down', () => app.doc.mergeDown()],
     ['Merge Visible', () => app.doc.mergeVisible()],
@@ -524,8 +549,18 @@ export function renderLayers(app) {
   const list = document.getElementById('layer-list')
   list.innerHTML = ''
   app.doc.layers.forEach((layer, i) => {
+    if (layer.parentId) {
+      let pid = layer.parentId
+      while (pid) {
+        const parent = app.doc.layers.find(l => l.id === pid)
+        if (!parent) break
+        if (parent.collapsed) return
+        pid = parent.parentId
+      }
+    }
+    const selected = app.doc.selected?.has(layer.id)
     const li = document.createElement('li')
-    li.className = 'layer-item' + (i === app.doc.active ? ' active' : '') + (layer.visible ? '' : ' hidden') + (layer.clip ? ' clipped' : '')
+    li.className = 'layer-item' + (i === app.doc.active ? ' active' : '') + (selected && i !== app.doc.active ? ' selected' : '') + (layer.visible ? '' : ' hidden') + (layer.clip ? ' clipped' : '') + (layer.kind === 'group' ? ' group' : '') + (layer.parentId ? ' nested' : '')
     li.draggable = true
     const thumb = document.createElement('canvas')
     thumb.width = 36
@@ -533,8 +568,17 @@ export function renderLayers(app) {
     const tctx = thumb.getContext('2d')
     tctx.fillStyle = '#222'
     tctx.fillRect(0, 0, 36, 24)
-    tctx.drawImage(layer.canvas, 0, 0, 36, 24)
-    li.innerHTML = `<span class="eye" title="Visibility">${layer.visible ? '◉' : '○'}</span>`
+    if (layer.kind !== 'group') tctx.drawImage(layer.canvas, 0, 0, 36, 24)
+    else {
+      tctx.fillStyle = '#3a3a3a'
+      tctx.fillRect(4, 6, 28, 14)
+      tctx.strokeStyle = '#888'
+      tctx.strokeRect(4.5, 6.5, 27, 13)
+    }
+    const toggle = layer.kind === 'group'
+      ? `<span class="fold" title="Collapse">${layer.collapsed ? '▸' : '▾'}</span>`
+      : '<span class="fold"></span>'
+    li.innerHTML = `${toggle}<span class="eye" title="Visibility">${layer.visible ? '◉' : '○'}</span>`
     li.appendChild(thumb)
     if (layer.mask) {
       const mt = document.createElement('canvas')
@@ -554,9 +598,26 @@ export function renderLayers(app) {
     mid.className = 'layer-mid'
     const name = document.createElement('input')
     name.value = layer.name
-    name.addEventListener('change', () => { layer.name = name.value })
+     name.addEventListener('change', () => {
+       layer.name = name.value
+       app.doc.pushHistory('Rename Layer')
+     })
     mid.appendChild(name)
-    if (layer.fx?.shadow || layer.fx?.stroke || layer.fx?.glow || layer.fx?.overlay) {
+    if (layer.kind === 'group') {
+      const t = document.createElement('span')
+      t.className = 'g-tag'
+      t.textContent = 'G'
+      t.title = 'Layer group'
+      mid.appendChild(t)
+    }
+    if (layer.kind === 'text') {
+      const t = document.createElement('span')
+      t.className = 't-tag'
+      t.textContent = 'T'
+      t.title = 'Type layer — double-click to edit'
+      mid.appendChild(t)
+    }
+    if (fxActive(layer.fx)) {
       const fx = document.createElement('span')
       fx.className = 'fx-tag'
       fx.textContent = 'fx'
@@ -581,6 +642,13 @@ export function renderLayers(app) {
       syncLayerControls(app)
     })
     li.appendChild(flags)
+    if (layer.kind === 'group') {
+      li.querySelector('.fold')?.addEventListener('click', (e) => {
+        e.stopPropagation()
+        layer.collapsed = !layer.collapsed
+        renderLayers(app)
+      })
+    }
     li.querySelector('.eye').addEventListener('click', (e) => {
       e.stopPropagation()
       app.doc.active = i
@@ -590,16 +658,24 @@ export function renderLayers(app) {
         else app.doc.hideOthers()
       } else {
         layer.visible = !layer.visible
+        if (layer.kind === 'group') {
+          app.doc.layers.forEach(l => { if (l.parentId === layer.id) l.visible = layer.visible })
+        }
       }
       app.render()
     })
-    li.addEventListener('click', () => {
-      app.doc.active = i
+    li.addEventListener('click', (e) => {
+      app.doc.selectLayer(i, e.shiftKey || e.ctrlKey || e.metaKey)
       syncLayerControls(app)
       renderLayers(app)
     })
     li.addEventListener('dblclick', (e) => {
       if (e.target.tagName === 'INPUT') return
+      if (layer.kind === 'text') {
+        e.preventDefault()
+        app.beginText({ x: layer.x, y: layer.y }, layer)
+        return
+      }
       name.focus()
       name.select()
     })
@@ -767,7 +843,9 @@ export const ADJUST_DEFS = [
   { id: 'saturation', label: 'Saturation', min: -100, max: 100, val: 0 },
   { id: 'hue', label: 'Hue', min: -180, max: 180, val: 0 },
   { id: 'exposure', label: 'Exposure', min: -100, max: 100, val: 0 },
+  { id: 'gamma', label: 'Gamma', min: 10, max: 300, val: 100 },
   { id: 'temperature', label: 'Temp', min: -100, max: 100, val: 0 },
+  { id: 'vibrance', label: 'Vibrance', min: -100, max: 100, val: 0 },
   { id: 'highlights', label: 'Highlights', min: -100, max: 100, val: 0 },
   { id: 'shadows', label: 'Shadows', min: -100, max: 100, val: 0 }
 ]

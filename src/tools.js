@@ -196,6 +196,7 @@ export function createToolController(app) {
     fontSize: 48,
     fontFamily: 'Arial',
     textBold: false,
+    textItalic: false,
     gradientType: 'linear',
     wandTol: 32,
     autoSelect: true,
@@ -206,7 +207,14 @@ export function createToolController(app) {
     shift: false,
     selMode: 'new',
     xfHandle: null,
-    xfStartBox: null
+    xfStartBox: null,
+    xfOrigCanvas: null,
+    xfStartAngle: 0,
+    cropHandle: null,
+    cropStart: null,
+    selXf: false,
+    selHandle: null,
+    selStartBox: null
   }
 
   function docPt(e) {
@@ -218,12 +226,13 @@ export function createToolController(app) {
     return layer ? app.doc.layerBox(layer) : null
   }
 
-  function hitXfHandle(p) {
-    if (!state.showTransform) return null
-    const b = xfBox()
+  function rotHandlePt(b) {
     if (!b) return null
-    const hs = 8 / Math.max(0.2, app.doc.zoom)
-    const pts = {
+    return { x: b.x + b.w / 2, y: b.y - 22 / Math.max(0.25, app.doc.zoom) }
+  }
+
+  function boxHandles(b) {
+    return {
       nw: { x: b.x, y: b.y },
       n: { x: b.x + b.w / 2, y: b.y },
       ne: { x: b.x + b.w, y: b.y },
@@ -233,15 +242,102 @@ export function createToolController(app) {
       sw: { x: b.x, y: b.y + b.h },
       w: { x: b.x, y: b.y + b.h / 2 }
     }
+  }
+
+  function hitHandleOn(b, p, extra) {
+    if (!b) return null
+    const hs = 8 / Math.max(0.2, app.doc.zoom)
+    const pts = extra ? { ...boxHandles(b), ...extra } : boxHandles(b)
     for (const [id, q] of Object.entries(pts)) {
       if (Math.abs(p.x - q.x) <= hs && Math.abs(p.y - q.y) <= hs) return id
     }
     return null
   }
 
+  function hitXfHandle(p) {
+    if (!state.showTransform) return null
+    const b = xfBox()
+    if (!b) return null
+    const rot = rotHandlePt(b)
+    return hitHandleOn(b, p, rot ? { rot } : null)
+  }
+
+  function hitCropHandle(p) {
+    const c = state.cropRect
+    if (!c) return null
+    const h = hitHandleOn(c, p)
+    if (h) return h
+    if (p.x >= c.x && p.y >= c.y && p.x <= c.x + c.w && p.y <= c.y + c.h) return 'move'
+    return null
+  }
+
+  function selBox() {
+    const s = app.doc.selection
+    if (!s || s.path) return null
+    return { x: s.x, y: s.y, w: s.w, h: s.h, ellipse: !!s.ellipse, inverted: !!s.inverted }
+  }
+
+  function hitSelHandle(p) {
+    const b = selBox()
+    if (!b) return null
+    const h = hitHandleOn(b, p)
+    if (h) return h
+    if (state.selXf && p.x >= b.x && p.y >= b.y && p.x <= b.x + b.w && p.y <= b.y + b.h) return 'move'
+    return null
+  }
+
+  function applySelBox(next) {
+    const s = app.doc.selection
+    if (!s) return
+    app.doc.selection = {
+      ...s,
+      x: next.x,
+      y: next.y,
+      w: next.w,
+      h: next.h,
+      path: null
+    }
+  }
+
   const XF_CURSOR = {
     nw: 'nwse-resize', n: 'ns-resize', ne: 'nesw-resize', e: 'ew-resize',
-    se: 'nwse-resize', s: 'ns-resize', sw: 'nesw-resize', w: 'ew-resize'
+    se: 'nwse-resize', s: 'ns-resize', sw: 'nesw-resize', w: 'ew-resize',
+    rot: 'grab', move: 'move'
+  }
+
+  function applyBoxResize(b, h, p, fromCenter, keep) {
+    let x = b.x, y = b.y, w = b.w, ht = b.h
+    const ratio = b.w / b.h
+    if (h.includes('w')) {
+      const nx = fromCenter ? b.x + b.w / 2 - (p.x < b.x + b.w / 2 ? b.x + b.w - p.x : p.x - b.x) : p.x
+      w = b.x + b.w - nx
+      x = nx
+    }
+    if (h.includes('e')) w = p.x - (fromCenter ? b.x + b.w / 2 - (p.x - (b.x + b.w / 2)) : b.x)
+    if (h.includes('n')) {
+      const ny = fromCenter ? b.y + b.h / 2 - Math.abs(p.y - (b.y + b.h / 2)) : p.y
+      ht = b.y + b.h - ny
+      y = ny
+    }
+    if (h.includes('s')) ht = p.y - (fromCenter ? b.y + b.h / 2 - Math.abs(p.y - (b.y + b.h / 2)) : b.y)
+    if (keep && ratio) {
+      if (h === 'n' || h === 's') { w = ht * ratio; x = b.x + (b.w - w) / 2 }
+      else if (h === 'e' || h === 'w') { ht = w / ratio; y = b.y + (b.h - ht) / 2 }
+      else {
+        const s = Math.max(Math.abs(w), Math.abs(ht * ratio)) / b.w
+        w = b.w * (w < 0 ? -s : s)
+        ht = b.h * (ht < 0 ? -s : s)
+        if (h.includes('w')) x = b.x + b.w - w
+        if (h.includes('n')) y = b.y + b.h - ht
+      }
+    }
+    if (fromCenter && (h === 'n' || h === 's' || h === 'e' || h === 'w' || h.length === 2)) {
+      x = b.x + b.w / 2 - Math.abs(w) / 2
+      y = b.y + b.h / 2 - Math.abs(ht) / 2
+    }
+    if (w < 0) { x += w; w = -w }
+    if (ht < 0) { y += ht; ht = -ht }
+    return { x, y, w: Math.max(2, w), h: Math.max(2, ht) }
   }
 
   function constrainRect(a, b, shift) {
@@ -290,19 +386,30 @@ export function createToolController(app) {
       return
     }
     const cur = app.doc.selection
-    if (mode === 'add' && cur) {
+    if ((mode === 'add' || mode === 'intersect') && cur) {
       const x = Math.min(cur.x, next.x)
       const y = Math.min(cur.y, next.y)
+      const w = Math.max(cur.x + cur.w, next.x + next.w) - x
+      const h = Math.max(cur.y + cur.h, next.y + next.h) - y
+      if (mode === 'intersect') {
+        const ix = Math.max(cur.x, next.x)
+        const iy = Math.max(cur.y, next.y)
+        const iw = Math.min(cur.x + cur.w, next.x + next.w) - ix
+        const ih = Math.min(cur.y + cur.h, next.y + next.h) - iy
+        app.doc.selection = iw > 0 && ih > 0
+          ? { x: ix, y: iy, w: iw, h: ih, ellipse: cur.ellipse && next.ellipse }
+          : null
+        return
+      }
       app.doc.selection = {
-        x, y,
-        w: Math.max(cur.x + cur.w, next.x + next.w) - x,
-        h: Math.max(cur.y + cur.h, next.y + next.h) - y,
-        ellipse: cur.ellipse && next.ellipse
+        x, y, w, h,
+        ellipse: cur.ellipse && next.ellipse,
+        path: next.path || cur.path || null
       }
       return
     }
     if (mode === 'subtract' && cur) {
-      app.doc.selection = { ...cur, inverted: true }
+      app.doc.selection = { ...cur, inverted: !cur.inverted }
       return
     }
     app.doc.selection = next
@@ -311,6 +418,7 @@ export function createToolController(app) {
   function layerCtx() {
     const layer = app.doc.currentLayer()
     if (!layer) return { layer: null, ctx: null }
+    if (layer.kind === 'group') return { layer, ctx: null }
     return { layer, ctx: layer.canvas.getContext('2d') }
   }
 
@@ -466,7 +574,7 @@ export function createToolController(app) {
       }
     }
     if (maxX < minX) return
-    app.doc.selection = { x: minX + ox, y: minY + oy, w: maxX - minX + 1, h: maxY - minY + 1 }
+    mergeSelection({ x: minX + ox, y: minY + oy, w: maxX - minX + 1, h: maxY - minY + 1 })
   }
 
   function sample(x, y) {
@@ -542,7 +650,9 @@ export function createToolController(app) {
     g.addColorStop(1, `rgba(${rgbB.r},${rgbB.g},${rgbB.b},1)`)
     ctx.fillStyle = g
     ctx.globalAlpha = state.opacity / 100
-    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height)
+    const cw = ctx.canvas?.width || layer?.canvas?.width || 0
+    const ch = ctx.canvas?.height || layer?.canvas?.height || 0
+    ctx.fillRect(0, 0, cw, ch)
     ctx.restore()
   }
 
@@ -572,20 +682,28 @@ export function createToolController(app) {
           d[i] = clamp(d[i] - 10)
           d[i + 1] = clamp(d[i + 1] - 10)
           d[i + 2] = clamp(d[i + 2] - 10)
-        } else if (mode === 'blur') {
-          const f = 0.72
-          d[i] = d[i] * f + 128 * (1 - f)
-          d[i + 1] = d[i + 1] * f + 128 * (1 - f)
-          d[i + 2] = d[i + 2] * f + 128 * (1 - f)
-        } else if (mode === 'sharpen') {
-          d[i] = clamp(d[i] * 1.08 - 8)
-          d[i + 1] = clamp(d[i + 1] * 1.08 - 8)
-          d[i + 2] = clamp(d[i + 2] * 1.08 - 8)
-        } else if (mode === 'heal') {
-          const n = 12
-          d[i] = clamp((d[i] + n) * 0.92)
-          d[i + 1] = clamp((d[i + 1] + n) * 0.92)
-          d[i + 2] = clamp((d[i + 2] + n) * 0.92)
+        } else if (mode === 'blur' || mode === 'heal' || mode === 'sharpen') {
+          let r = 0, g = 0, b = 0, n = 0
+          for (let oy = -1; oy <= 1; oy++) {
+            for (let ox = -1; ox <= 1; ox++) {
+              const nx = px + ox, ny = py + oy
+              if (nx < 0 || ny < 0 || nx >= sw || ny >= sh) continue
+              const j = (ny * sw + nx) * 4
+              r += d[j]; g += d[j + 1]; b += d[j + 2]; n++
+            }
+          }
+          if (!n) continue
+          const ar = r / n, ag = g / n, ab = b / n
+          if (mode === 'sharpen') {
+            d[i] = clamp(d[i] * 1.6 - ar * 0.6)
+            d[i + 1] = clamp(d[i + 1] * 1.6 - ag * 0.6)
+            d[i + 2] = clamp(d[i + 2] * 1.6 - ab * 0.6)
+          } else {
+            const mix = mode === 'heal' ? 0.65 : 0.45
+            d[i] = d[i] * (1 - mix) + ar * mix
+            d[i + 1] = d[i + 1] * (1 - mix) + ag * mix
+            d[i + 2] = d[i + 2] * (1 - mix) + ab * mix
+          }
         }
       }
     }
@@ -662,6 +780,25 @@ export function createToolController(app) {
       state.selMode = e.shiftKey && e.altKey ? 'intersect' : e.shiftKey ? 'add' : e.altKey ? 'subtract' : 'new'
       const { layer, ctx } = layerCtx()
 
+      if ((tool === 'crop' || tool === 'slice') && state.cropRect) {
+        const ch = hitCropHandle(p)
+        if (ch) {
+          state.cropHandle = ch
+          state.cropStart = { ...state.cropRect }
+          state.last = p
+          return
+        }
+      }
+      if ((tool === 'marquee' || tool === 'ellipse-marquee') && app.doc.selection && !app.doc.selection.path) {
+        const sh = hitSelHandle(p)
+        if (sh) {
+          state.selHandle = sh
+          state.selStartBox = { ...selBox() }
+          state.selXf = true
+          state.last = p
+          return
+        }
+      }
       if (tool === 'move' || tool === 'path') {
         const handle = hitXfHandle(p)
         if (handle) {
@@ -673,12 +810,17 @@ export function createToolController(app) {
           }
           state.xfHandle = handle
           state.xfStartBox = { ...app.doc.layerBox(layer) }
+          state.xfOrigCanvas = layer.canvas
+          if (handle === 'rot') {
+            const b = state.xfStartBox
+            state.xfStartAngle = Math.atan2(p.y - (b.y + b.h / 2), p.x - (b.x + b.w / 2))
+          }
           return
         }
         if (state.autoSelect) {
           const hit = app.doc.hitLayerAt(p.x, p.y, { skipLockPos: true })
           if (hit >= 0 && hit !== app.doc.active) {
-            app.doc.active = hit
+            app.doc.selectLayer(hit, e.shiftKey)
             app.render()
           }
         }
@@ -730,6 +872,9 @@ export function createToolController(app) {
         state.drawing = false
         return
       }
+      if (layer?.kind === 'text' && (paintTools.includes(tool) || toneTools.includes(tool) || shapeTools.includes(tool) || tool === 'fill' || tool === 'magic-eraser' || tool === 'gradient' || tool === 'clone' || tool === 'pen' || tool === 'smudge')) {
+        app.doc.rasterizeText(layer)
+      }
       if (tool === 'fill' && ctx) {
         const lp = layerPt(p, layer)
         floodFill(layer.canvas, lp.x, lp.y, app.doc.fg, false, state.wandTol, layer)
@@ -764,7 +909,9 @@ export function createToolController(app) {
         app.paint()
       }
       if (tool === 'text') {
-        app.beginText(p)
+        const hit = app.doc.hitLayerAt(p.x, p.y)
+        const hitLayer = hit >= 0 ? app.doc.layers[hit] : null
+        app.beginText(p, hitLayer?.kind === 'text' ? hitLayer : null)
         state.drawing = false
       }
       if (tool === 'path') return
@@ -776,10 +923,16 @@ export function createToolController(app) {
       state.alt = e.altKey
       const tool = app.tool
       if (!state.drawing) {
+        const wrapEl = document.getElementById('canvas-wrap')
         if ((tool === 'move' || tool === 'path') && state.showTransform) {
           const h = hitXfHandle(p)
-          const wrapEl = document.getElementById('canvas-wrap')
           if (wrapEl) wrapEl.style.cursor = h ? XF_CURSOR[h] : 'default'
+        } else if ((tool === 'crop' || tool === 'slice') && state.cropRect) {
+          const h = hitCropHandle(p)
+          if (wrapEl) wrapEl.style.cursor = h ? XF_CURSOR[h] || 'crosshair' : 'crosshair'
+        } else if ((tool === 'marquee' || tool === 'ellipse-marquee') && app.doc.selection && !app.doc.selection.path) {
+          const h = hitSelHandle(p)
+          if (wrapEl) wrapEl.style.cursor = h ? XF_CURSOR[h] || 'crosshair' : 'crosshair'
         }
         app.renderOverlay()
         return
@@ -793,44 +946,54 @@ export function createToolController(app) {
         state.last = p
         return
       }
+      if ((tool === 'crop' || tool === 'slice') && state.cropHandle && state.cropStart) {
+        if (state.cropHandle === 'move') {
+          state.cropRect = {
+            x: state.cropStart.x + (p.x - state.start.x),
+            y: state.cropStart.y + (p.y - state.start.y),
+            w: state.cropStart.w,
+            h: state.cropStart.h
+          }
+        } else {
+          state.cropRect = applyBoxResize(state.cropStart, state.cropHandle, p, e.altKey, e.shiftKey)
+        }
+        app.renderOverlay()
+        state.last = p
+        return
+      }
+      if (state.selHandle && state.selStartBox) {
+        if (state.selHandle === 'move') {
+          applySelBox({
+            x: state.selStartBox.x + (p.x - state.start.x),
+            y: state.selStartBox.y + (p.y - state.start.y),
+            w: state.selStartBox.w,
+            h: state.selStartBox.h
+          })
+        } else {
+          applySelBox(applyBoxResize(state.selStartBox, state.selHandle, p, e.altKey, e.shiftKey))
+        }
+        app.renderOverlay()
+        state.last = p
+        return
+      }
       if ((tool === 'move' || tool === 'path') && layer) {
         if (state.xfHandle && state.xfStartBox) {
           const b = state.xfStartBox
           const h = state.xfHandle
-          let x = b.x, y = b.y, w = b.w, ht = b.h
-          const fromCenter = e.altKey
-          const keep = e.shiftKey
-          const ratio = b.w / b.h
-          if (h.includes('w')) {
-            const nx = fromCenter ? b.x + b.w / 2 - (p.x < b.x + b.w / 2 ? b.x + b.w - p.x : p.x - b.x) : p.x
-            w = b.x + b.w - nx
-            x = nx
+          if (h === 'rot' && state.xfOrigCanvas) {
+            const cx = b.x + b.w / 2
+            const cy = b.y + b.h / 2
+            const ang = Math.atan2(p.y - cy, p.x - cx)
+            let rad = ang - state.xfStartAngle
+            if (e.shiftKey) rad = Math.round(rad / (Math.PI / 12)) * (Math.PI / 12)
+            app.doc.rotateLayerFrom(layer, state.xfOrigCanvas, b, rad)
+            app.paint()
+            app.renderOverlay()
+            state.last = p
+            return
           }
-          if (h.includes('e')) w = p.x - (fromCenter ? b.x + b.w / 2 - (p.x - (b.x + b.w / 2)) : b.x)
-          if (h.includes('n')) {
-            const ny = fromCenter ? b.y + b.h / 2 - Math.abs(p.y - (b.y + b.h / 2)) : p.y
-            ht = b.y + b.h - ny
-            y = ny
-          }
-          if (h.includes('s')) ht = p.y - (fromCenter ? b.y + b.h / 2 - Math.abs(p.y - (b.y + b.h / 2)) : b.y)
-          if (keep && ratio) {
-            if (h === 'n' || h === 's') { w = ht * ratio; x = b.x + (b.w - w) / 2 }
-            else if (h === 'e' || h === 'w') { ht = w / ratio; y = b.y + (b.h - ht) / 2 }
-            else {
-              const s = Math.max(Math.abs(w), Math.abs(ht * ratio)) / b.w
-              w = b.w * (w < 0 ? -s : s)
-              ht = b.h * (ht < 0 ? -s : s)
-              if (h.includes('w')) x = b.x + b.w - w
-              if (h.includes('n')) y = b.y + b.h - ht
-            }
-          }
-          if (fromCenter && (h === 'n' || h === 's' || h === 'e' || h === 'w' || h.length === 2)) {
-            x = b.x + b.w / 2 - Math.abs(w) / 2
-            y = b.y + b.h / 2 - Math.abs(ht) / 2
-          }
-          if (w < 0) { x += w; w = -w }
-          if (ht < 0) { y += ht; ht = -ht }
-          app.doc.scaleLayerTo(layer, x, y, Math.max(2, w), Math.max(2, ht))
+          const next = applyBoxResize(b, h, p, e.altKey, e.shiftKey)
+          app.doc.scaleLayerTo(layer, next.x, next.y, next.w, next.h)
           app.paint()
           app.renderOverlay()
           state.last = p
@@ -848,6 +1011,11 @@ export function createToolController(app) {
         }
         layer.x += dx
         layer.y += dy
+        if (layer.kind === 'group') {
+          app.doc.layers.forEach(l => {
+            if (l.parentId === layer.id) { l.x += dx; l.y += dy }
+          })
+        }
         app.paint()
         app.renderOverlay()
         state.last = p
@@ -909,9 +1077,22 @@ export function createToolController(app) {
       const p = docPt(e)
       const tool = app.tool
       const { ctx } = layerCtx()
+      if (state.cropHandle) {
+        state.cropHandle = null
+        state.cropStart = null
+        app.renderOverlay()
+        return
+      }
+      if (state.selHandle) {
+        state.selHandle = null
+        state.selStartBox = null
+        app.renderOverlay()
+        return
+      }
       if (state.xfHandle) {
         state.xfHandle = null
         state.xfStartBox = null
+        state.xfOrigCanvas = null
         app.doc.pushHistory('Transform')
         app.render()
       }
@@ -926,7 +1107,12 @@ export function createToolController(app) {
           const xs = state.points.map(q => q.x)
           const ys = state.points.map(q => q.y)
           const x = Math.min(...xs), y = Math.min(...ys)
-          mergeSelection({ x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y })
+          mergeSelection({
+            x, y,
+            w: Math.max(...xs) - x,
+            h: Math.max(...ys) - y,
+            path: state.points.map(q => ({ x: q.x, y: q.y }))
+          })
         }
         app.renderOverlay()
       }
@@ -991,6 +1177,17 @@ export function createToolController(app) {
             ctx.fillRect(x - hs, y - hs, hs * 2, hs * 2)
             ctx.strokeRect(x - hs, y - hs, hs * 2, hs * 2)
           })
+          const rot = rotHandlePt(b)
+          if (rot) {
+            ctx.beginPath()
+            ctx.moveTo(b.x + b.w / 2, b.y)
+            ctx.lineTo(rot.x, rot.y)
+            ctx.stroke()
+            ctx.beginPath()
+            ctx.arc(rot.x, rot.y, hs * 1.2, 0, Math.PI * 2)
+            ctx.fill()
+            ctx.stroke()
+          }
           if (state.showDistances) {
             ctx.fillStyle = '#0d99ff'
             ctx.font = `${11 / Math.max(0.5, app.doc.zoom)}px sans-serif`
@@ -1000,7 +1197,23 @@ export function createToolController(app) {
           ctx.restore()
         }
       }
-      if (state.cropRect && !state.drawing) {
+      const sb = selBox()
+      const curTool = app.tool
+      if (sb && (state.selXf || state.selHandle || curTool === 'marquee' || curTool === 'ellipse-marquee') && (!state.drawing || state.selHandle)) {
+        const hs = 4 / Math.max(0.25, app.doc.zoom)
+        const ch = boxHandles(sb)
+        ctx.save()
+        ctx.setLineDash([])
+        ctx.fillStyle = '#fff'
+        ctx.strokeStyle = '#0d99ff'
+        ctx.lineWidth = 1
+        Object.values(ch).forEach(q => {
+          ctx.fillRect(q.x - hs, q.y - hs, hs * 2, hs * 2)
+          ctx.strokeRect(q.x - hs, q.y - hs, hs * 2, hs * 2)
+        })
+        ctx.restore()
+      }
+      if (state.cropRect && (!state.drawing || state.cropHandle)) {
         const c = state.cropRect
         ctx.strokeRect(c.x, c.y, c.w, c.h)
         ctx.fillStyle = 'rgba(0,0,0,.35)'
@@ -1008,6 +1221,15 @@ export function createToolController(app) {
         ctx.fillRect(0, c.y + c.h, app.doc.width, app.doc.height - c.y - c.h)
         ctx.fillRect(0, c.y, c.x, c.h)
         ctx.fillRect(c.x + c.w, c.y, app.doc.width - c.x - c.w, c.h)
+        const hs = 4 / Math.max(0.25, app.doc.zoom)
+        const ch = boxHandles(c)
+        ctx.fillStyle = '#fff'
+        ctx.strokeStyle = '#0d99ff'
+        ctx.setLineDash([])
+        Object.values(ch).forEach(q => {
+          ctx.fillRect(q.x - hs, q.y - hs, hs * 2, hs * 2)
+          ctx.strokeRect(q.x - hs, q.y - hs, hs * 2, hs * 2)
+        })
       }
       if (!state.drawing) {
         ctx.restore()
@@ -1017,7 +1239,7 @@ export function createToolController(app) {
       const a = state.start
       const b = state.last
       if (!a || !b) { ctx.restore(); return }
-      if (tool === 'marquee' || tool === 'crop' || tool === 'slice' || tool === 'ellipse-marquee') {
+      if ((tool === 'marquee' || tool === 'crop' || tool === 'slice' || tool === 'ellipse-marquee') && !state.cropHandle) {
         const r = rectFromPoints(a, b, state.shift, state.alt)
         if (tool === 'ellipse-marquee') {
           ctx.beginPath()

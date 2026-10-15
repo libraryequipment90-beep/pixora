@@ -14,7 +14,7 @@
   --menubar-h: 36px;
   --options-h: 38px;
   --status-h: 24px;
-  --toolbar-w: 36px;
+  --toolbar-w: 44px;
   --panel-w: 268px;
   --font: "Segoe UI", system-ui, -apple-system, sans-serif;
 }
@@ -144,7 +144,7 @@ select {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 10px 0 42px;
+  padding: 0 10px 0 50px;
   overflow: auto;
   white-space: nowrap;
 }
@@ -171,7 +171,8 @@ select {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 2px 0 10px;
+  justify-content: flex-start;
+  padding: 2px 0 4px;
   gap: 0;
   overflow: visible;
   flex-shrink: 0;
@@ -179,13 +180,16 @@ select {
 }
 .tool-slot {
   position: relative;
-  width: 32px;
-  height: 24px;
+  width: 40px;
+  height: 26px;
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: 28px;
 }
 .tool-slot .tool {
-  width: 32px;
-  height: 24px;
-  border-radius: 0;
+  width: 40px;
+  height: 100%;
+  border-radius: 3px;
   color: #cfcfcf;
   display: grid;
   place-items: center;
@@ -193,21 +197,21 @@ select {
 }
 .tool-slot .tool:hover { background: #4d4d4d; }
 .tool-slot.active .tool { background: #1e6bb8; color: #fff; }
-.tool svg { width: 16px; height: 16px; fill: currentColor; }
+.tool svg { width: 16px; height: 16px; max-width: 78%; max-height: 78%; fill: currentColor; }
 .fly-dot {
   position: absolute;
-  right: 1px;
-  bottom: 1px;
+  right: 3px;
+  bottom: 3px;
   width: 0;
   height: 0;
-  border-left: 4px solid transparent;
-  border-bottom: 4px solid #bbb;
+  border-left: 5px solid transparent;
+  border-bottom: 5px solid #bbb;
 }
 .tool-slot.active .fly-dot { border-bottom-color: #fff; }
 .tool-fly {
   display: none;
   position: absolute;
-  left: 32px;
+  left: 40px;
   top: 0;
   background: #f4f4f4;
   border: 1px solid #bbb;
@@ -233,21 +237,21 @@ select {
 .tool-fly button:hover { background: #1e88e5; color: #fff; }
 .tool-fly button:hover em { color: #fff; }
 .tb-colors {
-  margin-top: auto;
+  margin-top: 4px;
   position: relative;
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   flex-shrink: 0;
 }
 .tb-fg, .tb-bg {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border: 1px solid #fff;
   box-shadow: 0 0 0 1px #000;
   position: absolute;
 }
 .tb-fg { left: 1px; top: 1px; z-index: 2; background: #000; }
-.tb-bg { left: 11px; top: 11px; z-index: 1; background: #fff; }
+.tb-bg { left: 13px; top: 13px; z-index: 1; background: #fff; }
 .tb-swap, .tb-reset {
   position: absolute;
   font-size: 8px;
@@ -445,7 +449,10 @@ select {
 .hex-row { display: flex; align-items: center; gap: 4px; }
 #hex-input { width: 72px; text-transform: uppercase; }
 
-.adjust-list { display: flex; flex-direction: column; gap: 4px; max-height: 148px; overflow: auto; }
+.adjust-list { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow: auto; }
+.extra-panel[data-panel="adjust"] { max-height: none; }
+#adj-apply, #adj-reset, #adj-cancel { padding: 4px 8px; background: #2a2a2a; border-radius: 3px; }
+#adj-apply { background: var(--accent); color: #fff; }
 .adj { display: grid; grid-template-columns: 72px 1fr 36px; align-items: center; gap: 6px; }
 .adj span { color: var(--text-dim); }
 
@@ -470,11 +477,12 @@ select {
   flex: 1;
   display: flex;
   flex-direction: column-reverse;
+  justify-content: flex-end;
   gap: 2px;
 }
 .layer-item {
   display: grid;
-  grid-template-columns: 18px 36px auto 1fr 16px;
+  grid-template-columns: 14px 18px 36px auto 1fr 16px;
   align-items: center;
   gap: 6px;
   padding: 4px 6px;
@@ -483,8 +491,13 @@ select {
   cursor: pointer;
 }
 .layer-item.active { outline: 1px solid var(--accent); background: #1e3a55; }
+.layer-item.selected { outline: 1px solid rgba(13,153,255,.45); background: #1a3048; }
 .layer-item.hidden { opacity: 0.45; }
 .layer-item.dragging { opacity: 0.4; }
+.layer-item.nested { padding-left: 18px; }
+.layer-item.group { background: #333; }
+.layer-item .fold { color: var(--text-dim); text-align: center; font-size: 10px; }
+.layer-item .g-tag { font-size: 9px; color: #c9a227; letter-spacing: 0.4px; }
 .layer-item canvas { width: 36px; height: 24px; background: #222; border: 1px solid #111; }
 .layer-item .mask-thumb { outline: 1px solid #888; }
 .layer-item .mask-thumb.off { opacity: 0.35; }
@@ -493,6 +506,7 @@ select {
 .layer-item .layer-mid { min-width: 0; display: flex; flex-direction: column; }
 .layer-item input { background: transparent; border: none; width: 100%; padding: 2px 0; }
 .layer-item .fx-tag { font-size: 9px; color: var(--accent); letter-spacing: 0.4px; }
+.layer-item .t-tag { font-size: 9px; color: #7ec8ff; letter-spacing: 0.4px; }
 .layer-item .clip-tag { font-size: 9px; color: #c9a227; }
 .layer-item.clipped { border-left: 2px solid #c9a227; }
 
@@ -663,3 +677,32 @@ select {
   user-select: text;
   pointer-events: auto;
 }
+
+.ls-modal { min-width: 720px; max-width: 780px; }
+.ls-body { display: grid; grid-template-columns: 210px 1fr 110px; min-height: 380px; padding: 0 !important; }
+.ls-nav {
+  border-right: 1px solid #222; overflow: auto; padding: 8px 0;
+  display: flex; flex-direction: column;
+}
+.ls-nav button {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; text-align: left; padding: 5px 12px; color: var(--text);
+  background: transparent; border: none; font-size: 12px;
+}
+.ls-nav button.on { background: #1e3a55; }
+.ls-nav button:hover { background: #2a2a2a; }
+.ls-nav label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.ls-pane { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.ls-pane h3 { font-size: 13px; border-bottom: 1px solid #222; padding-bottom: 8px; margin: 0 0 4px; }
+.ls-side { padding: 12px; border-left: 1px solid #222; display: flex; flex-direction: column; gap: 8px; }
+.ls-preview {
+  width: 72px; height: 72px; background: #2a2a2a; border: 1px solid #111; border-radius: 3px;
+}
+.form-row { display: grid; grid-template-columns: 88px 1fr auto; align-items: center; gap: 8px; }
+.form-row label { color: var(--text-dim); }
+.form-row input[type="range"] { width: 100%; }
+.form-row input[type="number"], .form-row select, .form-row input[type="color"] {
+  background: #1c1c1c; border: 1px solid #111; border-radius: 3px; padding: 4px 6px; color: #fff;
+}
+.form-row input[type="color"] { width: 36px; height: 24px; padding: 1px; }
+.mini-dlg .form-row { grid-template-columns: 80px 1fr auto; }

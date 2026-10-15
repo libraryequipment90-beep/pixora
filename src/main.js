@@ -1,4 +1,4 @@
-import { Document, documentFromImage, loadImage, createCanvas } from './engine.js'
+import { Document, documentFromImage, documentFromProject, loadImage, createCanvas, cloneCanvas, BLEND_MODES, BLEND_LABELS, defaultFx, ensureFx } from './engine.js'
 import { createToolController, toolById } from './tools.js'
 import { FILTERS, applyAdjustments } from './filters.js'
 import {
@@ -17,7 +17,7 @@ const app = {
   tool: 'brush',
   tools: null,
   cursor: { x: 0, y: 0 },
-  adj: Object.fromEntries(ADJUST_DEFS.map(a => [a.id, 0])),
+  adj: Object.fromEntries(ADJUST_DEFS.map(a => [a.id, a.id === 'gamma' ? 100 : 0])),
   adjBase: null,
   marching: 0,
   colorTarget: 'fg',
@@ -131,7 +131,18 @@ const app = {
     this.drawNavigator()
   },
   setZoom(z, around) {
-    this.doc.zoom = Math.max(0.05, Math.min(8, z))
+    const next = Math.max(0.05, Math.min(8, z))
+    if (around && this.doc.zoom) {
+      const sx = around.x / this.doc.width
+      const sy = around.y / this.doc.height
+      const oldW = this.doc.width * this.doc.zoom
+      const oldH = this.doc.height * this.doc.zoom
+      const newW = this.doc.width * next
+      const newH = this.doc.height * next
+      this.doc.panX += (oldW - newW) * (sx - 0.5)
+      this.doc.panY += (oldH - newH) * (sy - 0.5)
+    }
+    this.doc.zoom = next
     this.doc._fitted = true
     this.layoutCanvas()
   },
@@ -175,7 +186,11 @@ const app = {
         ctx.setLineDash([5, 5])
         ctx.lineDashOffset = offset
         ctx.beginPath()
-        if (sel.ellipse) {
+        if (sel.path && sel.path.length > 2) {
+          ctx.moveTo(sel.path[0].x, sel.path[0].y)
+          for (let i = 1; i < sel.path.length; i++) ctx.lineTo(sel.path[i].x, sel.path[i].y)
+          ctx.closePath()
+        } else if (sel.ellipse) {
           ctx.ellipse(sel.x + sel.w / 2, sel.y + sel.h / 2, sel.w / 2, sel.h / 2, 0, 0, Math.PI * 2)
         } else {
           ctx.rect(sel.x + 0.5, sel.y + 0.5, sel.w, sel.h)
@@ -193,12 +208,13 @@ const app = {
       ctx.font = ed.font
       ctx.fillStyle = ed.color
       ctx.textBaseline = 'alphabetic'
-      ctx.textAlign = 'left'
+      ctx.textAlign = ed.align || 'left'
       const metrics = ctx.measureText(ed.text || '')
       const ascent = metrics.actualBoundingBoxAscent || 40
-      ctx.fillText(ed.text, ed.x, ed.y)
+      if (!ed.layer) ctx.fillText(ed.text, ed.x, ed.y)
       if (Math.floor(Date.now() / 500) % 2 === 0) {
-        const cx = ed.x + (metrics.width || 0)
+        const w = metrics.width || 0
+        const cx = ed.align === 'center' ? ed.x + w / 2 : ed.align === 'right' ? ed.x : ed.x + w
         ctx.strokeStyle = ed.color
         ctx.lineWidth = 1
         ctx.setLineDash([])
@@ -220,29 +236,52 @@ const app = {
   },
   applyFilter(id) {
     const layer = this.doc.currentLayer()
-    if (!layer) return
+    if (!layer || layer.locked || layer.kind === 'group') return
+    this.doc.rasterizeText(layer)
     const fn = FILTERS[id]
     if (!fn) return
     fn(layer.canvas)
     this.doc.pushHistory(id)
     this.render()
   },
+  resetAdjustSliders() {
+    ADJUST_DEFS.forEach(a => {
+      this.adj[a.id] = a.id === 'gamma' ? 100 : 0
+    })
+    document.querySelectorAll('#adjust-list input[data-id]').forEach(i => {
+      i.value = i.dataset.id === 'gamma' ? 100 : 0
+    })
+    document.querySelectorAll('#adjust-list .val').forEach(s => {
+      const id = s.parentElement.querySelector('input')?.dataset.id
+      s.textContent = id === 'gamma' ? '100' : '0'
+    })
+  },
   applyLiveAdjust() {
     const layer = this.doc.currentLayer()
-    if (!layer || !this.adjBase) return
+    if (!layer || layer.kind === 'group' || !this.adjBase) return
     const ctx = layer.canvas.getContext('2d')
     ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height)
     ctx.drawImage(this.adjBase, 0, 0)
     applyAdjustments(layer.canvas, this.adj)
-    this.render()
+    this.paint()
   },
   commitAdjust() {
     if (!this.adjBase) return
     this.doc.pushHistory('Adjustments')
     this.adjBase = null
-    ADJUST_DEFS.forEach(a => { this.adj[a.id] = 0 })
-    document.querySelectorAll('#adjust-list input').forEach(i => { i.value = 0 })
-    document.querySelectorAll('#adjust-list .val').forEach(s => { s.textContent = '0' })
+    this.resetAdjustSliders()
+    this.render()
+  },
+  cancelAdjust() {
+    const layer = this.doc.currentLayer()
+    if (layer && this.adjBase) {
+      const ctx = layer.canvas.getContext('2d')
+      ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height)
+      ctx.drawImage(this.adjBase, 0, 0)
+    }
+    this.adjBase = null
+    this.resetAdjustSliders()
+    this.render()
   },
   selectAll() {
     this.doc.selection = { x: 0, y: 0, w: this.doc.width, h: this.doc.height }
@@ -271,56 +310,65 @@ const app = {
     this.layoutCanvas()
   },
   rotate(deg) {
-    const rad = deg * Math.PI / 180
-    const swap = Math.abs(deg) === 90
-    const nw = swap ? this.doc.height : this.doc.width
-    const nh = swap ? this.doc.width : this.doc.height
-    for (const layer of this.doc.layers) {
-      const next = createCanvas(nw, nh)
-      const ctx = next.getContext('2d')
-      ctx.translate(nw / 2, nh / 2)
-      ctx.rotate(rad)
-      ctx.drawImage(layer.canvas, -layer.canvas.width / 2, -layer.canvas.height / 2)
-      layer.canvas = next
-    }
-    this.doc.width = nw
-    this.doc.height = nh
-    this.doc.pushHistory('Rotate')
+    this.doc.rotate(deg)
     this.layoutCanvas()
   },
   flip(h) {
-    for (const layer of this.doc.layers) {
-      const next = createCanvas(layer.canvas.width, layer.canvas.height)
-      const ctx = next.getContext('2d')
-      ctx.translate(h ? next.width : 0, h ? 0 : next.height)
-      ctx.scale(h ? -1 : 1, h ? 1 : -1)
-      ctx.drawImage(layer.canvas, 0, 0)
-      layer.canvas = next
-    }
-    this.doc.pushHistory(h ? 'Flip Horizontal' : 'Flip Vertical')
+    this.doc.flip(h)
     this.render()
   },
   async openFile() { fileOpen.click() },
   async placeFile() { filePlace.click() },
   async loadFromFile(file, place) {
+    const name = file.name.replace(/\.[^.]+$/, '')
+    if (!place && /\.(pixora|json)$/i.test(file.name)) {
+      try {
+        const data = JSON.parse(await file.text())
+        if (data.format !== 'pixora') throw new Error('Not a Pixora project')
+        this.doc = await documentFromProject(data)
+        this.bindDoc()
+        document.getElementById('doc-title').textContent = this.doc.name
+        this.layoutCanvas()
+        toast('Project opened')
+      } catch {
+        toast('Could not open project file')
+      }
+      return
+    }
+    if (!file.type.startsWith('image/') && !/\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name)) {
+      toast('Unsupported file. Use PNG, JPG, WEBP, or a .pixora project.')
+      return
+    }
     const url = URL.createObjectURL(file)
-    const img = await loadImage(url)
+    let img
+    try {
+      img = await loadImage(url)
+    } catch {
+      URL.revokeObjectURL(url)
+      toast('Could not load image')
+      return
+    }
     URL.revokeObjectURL(url)
     if (place) {
-      const layer = this.doc.addLayer(file.name.replace(/\.[^.]+$/, ''))
-      const ctx = layer.canvas.getContext('2d')
-      const scale = Math.min(1, this.doc.width / img.width, this.doc.height / img.height)
-      const w = img.width * scale, h = img.height * scale
-      ctx.drawImage(img, (this.doc.width - w) / 2, (this.doc.height - h) / 2, w, h)
-      this.doc.pushHistory('Place')
+      this.doc.placeImage(img, name)
     } else {
-      this.doc = await documentFromImage(img, file.name.replace(/\.[^.]+$/, ''))
+      this.doc = await documentFromImage(img, name)
       this.bindDoc()
     }
     document.getElementById('doc-title').textContent = this.doc.name
     this.layoutCanvas()
     renderHistory(this)
     syncLayerControls(this)
+  },
+  async saveProject() {
+    const data = await this.doc.toProject()
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `${this.doc.name || 'Untitled'}.pixora`
+    a.click()
+    URL.revokeObjectURL(a.href)
+    toast('Project saved')
   },
   bindDoc() {
     this.doc.on(type => {
@@ -332,14 +380,47 @@ const app = {
       }
     })
   },
-  async exportImage(kind) {
+  async exportImage(kind = 'png', quality = 0.92) {
     const mime = kind === 'jpeg' ? 'image/jpeg' : kind === 'webp' ? 'image/webp' : 'image/png'
-    const blob = await this.doc.exportBlob(mime, 0.92)
+    const blob = await this.doc.exportBlob(mime, quality)
+    if (!blob) { toast('Export failed'); return }
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `${this.doc.name}.${kind}`
+    a.download = `${this.doc.name}.${kind === 'jpeg' ? 'jpg' : kind}`
     a.click()
     URL.revokeObjectURL(a.href)
+  },
+  exportDialog() {
+    const body = document.createElement('div')
+    body.innerHTML = `
+      <div class="row"><label>Format</label>
+        <select id="ex-kind">
+          <option value="png">PNG</option>
+          <option value="jpeg">JPEG</option>
+          <option value="webp">WEBP</option>
+        </select>
+      </div>
+      <div class="row" id="ex-qrow" hidden>
+        <label>Quality</label>
+        <input id="ex-q" type="range" min="10" max="100" value="92">
+        <span id="ex-qv">92%</span>
+      </div>
+      <div class="row"><label>Size</label><span>${this.doc.width} × ${this.doc.height} px</span></div>`
+    const kind = body.querySelector('#ex-kind')
+    const qrow = body.querySelector('#ex-qrow')
+    const q = body.querySelector('#ex-q')
+    const qv = body.querySelector('#ex-qv')
+    const sync = () => { qrow.hidden = kind.value === 'png' }
+    kind.onchange = sync
+    q.oninput = () => { qv.textContent = q.value + '%' }
+    modal({
+      title: 'Export Image',
+      body,
+      okLabel: 'Export',
+      onOk: () => {
+        this.exportImage(kind.value, +q.value / 100)
+      }
+    })
   },
   newDocDialog() {
     const body = document.createElement('div')
@@ -470,14 +551,48 @@ const app = {
   },
   imageSizeDialog() {
     const body = document.createElement('div')
+    const ow = this.doc.width, oh = this.doc.height
     body.innerHTML = `
-      <div class="row"><label>Width</label><input id="is-w" type="number" value="${this.doc.width}"></div>
-      <div class="row"><label>Height</label><input id="is-h" type="number" value="${this.doc.height}"></div>`
+      <div class="row"><label>Width</label><input id="is-w" type="number" min="1" value="${ow}"></div>
+      <div class="row"><label>Height</label><input id="is-h" type="number" min="1" value="${oh}"></div>
+      <div class="row"><label></label><label><input id="is-link" type="checkbox" checked> Constrain proportions</label></div>`
+    const w = body.querySelector('#is-w')
+    const h = body.querySelector('#is-h')
+    const link = body.querySelector('#is-link')
+    w.oninput = () => { if (link.checked) h.value = Math.max(1, Math.round(+w.value * oh / ow)) }
+    h.oninput = () => { if (link.checked) w.value = Math.max(1, Math.round(+h.value * ow / oh)) }
     modal({
       title: 'Image Size',
       body,
       onOk: () => {
-        this.doc.resize(+body.querySelector('#is-w').value, +body.querySelector('#is-h').value)
+        this.doc.resize(+w.value, +h.value)
+        this.layoutCanvas()
+      }
+    })
+  },
+  canvasSizeDialog() {
+    const body = document.createElement('div')
+    body.innerHTML = `
+      <div class="row"><label>Width</label><input id="cs-w" type="number" min="1" value="${this.doc.width}"></div>
+      <div class="row"><label>Height</label><input id="cs-h" type="number" min="1" value="${this.doc.height}"></div>
+      <div class="row"><label>Anchor</label>
+        <select id="cs-a">
+          <option value="center">Center</option>
+          <option value="topleft">Top Left</option>
+          <option value="top">Top</option>
+          <option value="topright">Top Right</option>
+          <option value="left">Left</option>
+          <option value="right">Right</option>
+          <option value="bottomleft">Bottom Left</option>
+          <option value="bottom">Bottom</option>
+          <option value="bottomright">Bottom Right</option>
+        </select>
+      </div>`
+    modal({
+      title: 'Canvas Size',
+      body,
+      onOk: () => {
+        this.doc.canvasSize(+body.querySelector('#cs-w').value, +body.querySelector('#cs-h').value, body.querySelector('#cs-a').value)
         this.layoutCanvas()
       }
     })
@@ -491,16 +606,291 @@ const app = {
       [ ] Brush size · X Swap colors · D Reset colors · Space Hand<br>
       Shift constrain · Alt from center / sample / duplicate<br>
       Enter crop · Esc cancel · 1–0 opacity · Arrows nudge<br>
-      Ctrl+N New · Ctrl+Shift+N New layer · Ctrl+J Layer via Copy<br>
-      Ctrl+A Select all · Ctrl+Shift+I Inverse · Ctrl+[ ] Arrange
+      Ctrl+N New · Ctrl+S Save project · Ctrl+Shift+S Export image<br>
+      Ctrl+O Open · Ctrl+J Duplicate / Layer via Copy · Ctrl+A Select all<br>
+      Ctrl+G Group · Ctrl+Shift+G Ungroup · Ctrl+Shift+I Inverse · Ctrl+[ ] Arrange
     </div>`
     modal({ title: 'Keyboard Shortcuts', body, onOk: () => true })
   },
   aboutDialog() {
     const body = document.createElement('div')
     body.innerHTML = `<p>Pixora is a free in-browser photo editor inspired by Photoshop and Photopea.</p>
-      <p style="margin-top:8px;color:#aaa">Layers, masks-style selections, brushes, filters, adjustments, and PSD-like workflow — all local in your browser. Files never leave your device.</p>`
+      <p style="margin-top:8px;color:#aaa">Layers, selections, brushes, filters, adjustments, and .pixora project files — all local in your browser. Files never leave your device.</p>`
     modal({ title: 'About Pixora', body, onOk: () => true })
+  },
+  blendSelect(id, value) {
+    return `<select id="${id}">${BLEND_MODES.map(m => `<option value="${m}"${m === value ? ' selected' : ''}>${BLEND_LABELS[m]}</option>`).join('')}</select>`
+  },
+  layerStyleDialog(openTo = 'stroke') {
+    const layer = this.doc.currentLayer()
+    if (!layer) return
+    const orig = JSON.parse(JSON.stringify(ensureFx(layer)))
+    const origBlend = layer.blend
+    const origOp = layer.opacity
+    const origFill = layer.fill
+    const fx = { ...defaultFx(), ...orig }
+    const effects = [
+      ['blending', 'Blending Options', null],
+      ['bevel', 'Bevel and Emboss', 'bevel'],
+      ['stroke', 'Stroke', 'stroke'],
+      ['innerShadow', 'Inner Shadow', 'innerShadow'],
+      ['innerGlow', 'Inner Glow', 'innerGlow'],
+      ['satin', 'Satin', 'satin'],
+      ['overlay', 'Color Overlay', 'overlay'],
+      ['gradientOverlay', 'Gradient Overlay', 'gradientOverlay'],
+      ['patternOverlay', 'Pattern Overlay', 'patternOverlay'],
+      ['glow', 'Outer Glow', 'glow'],
+      ['shadow', 'Drop Shadow', 'shadow']
+    ]
+    if (!effects.some(e => e[0] === openTo)) openTo = 'stroke'
+    const body = document.createElement('div')
+    body.className = 'ls-body'
+    const nav = effects.map(([id, label, key]) => {
+      const chk = key ? `<input type="checkbox" data-fx="${key}"${fx[key] ? ' checked' : ''}>` : ''
+      return `<button type="button" data-pane="${id}" class="${id === openTo ? 'on' : ''}">${chk}<span>${label}</span></button>`
+    }).join('')
+    body.innerHTML = `
+      <div class="ls-nav">${nav}</div>
+      <div class="ls-pane" id="ls-pane"></div>
+      <div class="ls-side">
+        <button type="button" class="ok" id="ls-ok">OK</button>
+        <canvas class="ls-preview" id="ls-preview" width="72" height="72"></canvas>
+      </div>`
+    const pane = body.querySelector('#ls-pane')
+    const preview = body.querySelector('#ls-preview')
+    const row = (lab, ctrl) => `<div class="form-row"><label>${lab}</label>${ctrl}</div>`
+    const renderPane = (id) => {
+      body.querySelectorAll('[data-pane]').forEach(b => b.classList.toggle('on', b.dataset.pane === id))
+      if (id === 'stroke') {
+        pane.innerHTML = `<h3>Stroke</h3>
+          ${row('Size:', `<input id="ls-ss" type="range" min="1" max="50" value="${fx.strokeSize}"><input id="ls-ssn" type="number" min="1" max="50" value="${fx.strokeSize}" style="width:52px"> px`)}
+          ${row('Position:', `<select id="ls-sp"><option value="outside"${fx.strokePos === 'outside' ? ' selected' : ''}>Outside</option><option value="inside"${fx.strokePos === 'inside' ? ' selected' : ''}>Inside</option><option value="center"${fx.strokePos === 'center' ? ' selected' : ''}>Center</option></select>`)}
+          ${row('Blend Mode:', this.blendSelect('ls-sb', fx.strokeBlend))}
+          ${row('Opacity:', `<input id="ls-so" type="range" min="0" max="100" value="${fx.strokeOpacity}"><span id="ls-sov">${fx.strokeOpacity}</span> %`)}
+          ${row('Overprint', `<label><input id="ls-ovp" type="checkbox"${fx.strokeOverprint ? ' checked' : ''}> Overprint</label>`)}
+          ${row('Fill Type:', `<select id="ls-sft"><option>Color</option></select>`)}
+          ${row('Color:', `<input id="ls-sc" type="color" value="${fx.strokeColor || '#000000'}">`)}`
+      } else if (id === 'shadow') {
+        pane.innerHTML = `<h3>Drop Shadow</h3>
+          ${row('Opacity:', `<input id="ls-sho" type="range" min="0" max="100" value="${fx.shadowOpacity}"><span>${fx.shadowOpacity}</span> %`)}
+          ${row('Angle:', `<input id="ls-sha" type="number" min="0" max="360" value="${fx.shadowAngle}"> °`)}
+          ${row('Distance:', `<input id="ls-shd" type="range" min="0" max="80" value="${fx.shadowDistance}"><span>${fx.shadowDistance}</span> px`)}
+          ${row('Size:', `<input id="ls-shs" type="range" min="0" max="80" value="${fx.shadowSize}"><span>${fx.shadowSize}</span> px`)}
+          ${row('Color:', `<input id="ls-shc" type="color" value="${fx.shadowColor || '#000000'}">`)}`
+      } else if (id === 'glow') {
+        pane.innerHTML = `<h3>Outer Glow</h3>
+          ${row('Opacity:', `<input id="ls-go" type="range" min="0" max="100" value="${fx.glowOpacity}"><span>${fx.glowOpacity}</span> %`)}
+          ${row('Size:', `<input id="ls-gs" type="range" min="0" max="80" value="${fx.glowSize}"><span>${fx.glowSize}</span> px`)}
+          ${row('Color:', `<input id="ls-gc" type="color" value="${fx.glowColor || this.doc.fg}">`)}`
+      } else if (id === 'overlay') {
+        pane.innerHTML = `<h3>Color Overlay</h3>
+          ${row('Blend Mode:', this.blendSelect('ls-ob', fx.overlayBlend || 'overlay'))}
+          ${row('Opacity:', `<input id="ls-oo" type="range" min="0" max="100" value="${fx.overlayOpacity}"><span>${fx.overlayOpacity}</span> %`)}
+          ${row('Color:', `<input id="ls-oc" type="color" value="${fx.overlayColor || this.doc.fg}">`)}`
+      } else if (id === 'innerShadow') {
+        pane.innerHTML = `<h3>Inner Shadow</h3>
+          ${row('Opacity:', `<input id="ls-iso" type="range" min="0" max="100" value="${fx.innerShadowOpacity}"><span>${fx.innerShadowOpacity}</span> %`)}
+          ${row('Distance:', `<input id="ls-isd" type="range" min="0" max="80" value="${fx.innerShadowDistance}"><span>${fx.innerShadowDistance}</span> px`)}
+          ${row('Size:', `<input id="ls-iss" type="range" min="0" max="80" value="${fx.innerShadowSize}"><span>${fx.innerShadowSize}</span> px`)}
+          ${row('Color:', `<input id="ls-isc" type="color" value="${fx.innerShadowColor || '#000000'}">`)}`
+      } else if (id === 'innerGlow') {
+        pane.innerHTML = `<h3>Inner Glow</h3>
+          ${row('Opacity:', `<input id="ls-igo" type="range" min="0" max="100" value="${fx.innerGlowOpacity}"><span>${fx.innerGlowOpacity}</span> %`)}
+          ${row('Size:', `<input id="ls-igs" type="range" min="0" max="80" value="${fx.innerGlowSize}"><span>${fx.innerGlowSize}</span> px`)}
+          ${row('Color:', `<input id="ls-igc" type="color" value="${fx.innerGlowColor || this.doc.fg}">`)}`
+      } else if (id === 'bevel') {
+        pane.innerHTML = `<h3>Bevel and Emboss</h3>
+          ${row('Size:', `<input id="ls-bs" type="range" min="0" max="40" value="${fx.bevelSize}"><span>${fx.bevelSize}</span> px`)}`
+      } else if (id === 'gradientOverlay') {
+        pane.innerHTML = `<h3>Gradient Overlay</h3>
+          ${row('Color:', `<input id="ls-grc" type="color" value="${fx.gradientColor || this.doc.fg}">`)}`
+      } else if (id === 'blending') {
+        pane.innerHTML = `<h3>Blending Options</h3>
+          ${row('Blend Mode:', this.blendSelect('ls-blend', layer.blend))}
+          ${row('Opacity:', `<input id="ls-lop" type="range" min="0" max="100" value="${Math.round((layer.opacity ?? 1) * 100)}"><span>${Math.round((layer.opacity ?? 1) * 100)}</span> %`)}
+          ${row('Fill:', `<input id="ls-lfill" type="range" min="0" max="100" value="${Math.round((layer.fill ?? 1) * 100)}"><span>${Math.round((layer.fill ?? 1) * 100)}</span> %`)}`
+      } else {
+        pane.innerHTML = `<h3>${effects.find(e => e[0] === id)?.[1] || id}</h3><p style="color:#aaa">Enable the checkbox to apply this effect.</p>`
+      }
+      pane.querySelectorAll('input, select').forEach(el => {
+        el.addEventListener('input', readFields)
+        el.addEventListener('change', readFields)
+      })
+    }
+    const readFields = () => {
+      const g = id => pane.querySelector(id)
+      const num = (id, fb) => g(id) ? +g(id).value : fb
+      if (g('#ls-ss')) {
+        fx.strokeSize = num('#ls-ss', fx.strokeSize)
+        g('#ls-ssn') && (g('#ls-ssn').value = fx.strokeSize)
+        fx.strokePos = g('#ls-sp')?.value || fx.strokePos
+        fx.strokeBlend = g('#ls-sb')?.value || fx.strokeBlend
+        fx.strokeOpacity = num('#ls-so', fx.strokeOpacity)
+        const sov = pane.querySelector('#ls-sov')
+        if (sov) sov.textContent = fx.strokeOpacity
+        fx.strokeOverprint = !!g('#ls-ovp')?.checked
+        fx.strokeColor = g('#ls-sc')?.value || fx.strokeColor
+      }
+      if (g('#ls-sho')) {
+        fx.shadowOpacity = num('#ls-sho', fx.shadowOpacity)
+        fx.shadowAngle = num('#ls-sha', fx.shadowAngle)
+        fx.shadowDistance = num('#ls-shd', fx.shadowDistance)
+        fx.shadowSize = num('#ls-shs', fx.shadowSize)
+        fx.shadowColor = g('#ls-shc')?.value || fx.shadowColor
+        pane.querySelectorAll('.form-row span').forEach((s, i) => {
+          const vals = [fx.shadowOpacity, fx.shadowDistance, fx.shadowSize]
+          if (vals[i] != null) s.textContent = vals[i]
+        })
+      }
+      if (g('#ls-go')) { fx.glowOpacity = num('#ls-go', fx.glowOpacity); fx.glowSize = num('#ls-gs', fx.glowSize); fx.glowColor = g('#ls-gc')?.value }
+      if (g('#ls-oo')) { fx.overlayOpacity = num('#ls-oo', fx.overlayOpacity); fx.overlayBlend = g('#ls-ob')?.value || fx.overlayBlend; fx.overlayColor = g('#ls-oc')?.value }
+      if (g('#ls-iso')) { fx.innerShadowOpacity = num('#ls-iso', fx.innerShadowOpacity); fx.innerShadowDistance = num('#ls-isd', fx.innerShadowDistance); fx.innerShadowSize = num('#ls-iss', fx.innerShadowSize); fx.innerShadowColor = g('#ls-isc')?.value }
+      if (g('#ls-igo')) { fx.innerGlowOpacity = num('#ls-igo', fx.innerGlowOpacity); fx.innerGlowSize = num('#ls-igs', fx.innerGlowSize); fx.innerGlowColor = g('#ls-igc')?.value }
+      if (g('#ls-bs')) fx.bevelSize = num('#ls-bs', fx.bevelSize)
+      if (g('#ls-grc')) fx.gradientColor = g('#ls-grc').value
+      if (g('#ls-blend')) {
+        layer.blend = g('#ls-blend').value
+        layer.opacity = num('#ls-lop', 100) / 100
+        layer.fill = num('#ls-lfill', 100) / 100
+      }
+      if (g('#ls-ss') && g('#ls-ssn')) {
+        g('#ls-ss').oninput = () => { g('#ls-ssn').value = g('#ls-ss').value; readFields() }
+        g('#ls-ssn').oninput = () => { g('#ls-ss').value = g('#ls-ssn').value; readFields() }
+      }
+      layer.fx = { ...fx }
+      this.paint()
+      this.drawStylePreview(preview, layer)
+    }
+    body.querySelectorAll('[data-pane]').forEach(b => {
+      b.onclick = e => {
+        if (e.target.dataset.fx) return
+        renderPane(b.dataset.pane)
+      }
+    })
+    body.querySelectorAll('[data-fx]').forEach(chk => {
+      chk.addEventListener('click', e => e.stopPropagation())
+      chk.addEventListener('change', () => {
+        fx[chk.dataset.fx] = chk.checked
+        layer.fx = { ...fx }
+        this.paint()
+        this.drawStylePreview(preview, layer)
+      })
+    })
+    const wrap = modal({ title: 'Layer Style', body, hideFoot: true, cls: 'ls-modal', onOk: () => true })
+    wrap.querySelector('.body').style.padding = '0'
+    wrap.querySelector('#ls-ok').onclick = () => {
+      layer.fx = { ...fx }
+      this.doc.pushHistory('Layer Style')
+      this.render()
+      wrap.remove()
+    }
+    const revert = () => {
+      layer.fx = orig
+      layer.blend = origBlend
+      layer.opacity = origOp
+      layer.fill = origFill
+      this.render()
+    }
+    wrap.querySelector('.modal-x').addEventListener('click', revert)
+    wrap.addEventListener('click', e => { if (e.target === wrap) revert() })
+    renderPane(openTo)
+    this.drawStylePreview(preview, layer)
+  },
+  drawStylePreview(canvas, layer) {
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = '#2a2a2a'
+    ctx.fillRect(0, 0, 72, 72)
+    if (!layer?.canvas) return
+    ctx.drawImage(layer.canvas, 8, 16, 56, 40)
+  },
+  strokeDialog() {
+    const layer = this.doc.currentLayer()
+    if (!layer || layer.locked) { toast('Layer is locked'); return }
+    const snap = cloneCanvas(layer.canvas)
+    const body = document.createElement('div')
+    body.className = 'mini-dlg'
+    body.innerHTML = `
+      <div class="form-row"><label>Width:</label><input id="st-s" type="range" min="1" max="50" value="3"><input id="st-sn" type="number" min="1" max="50" value="3" style="width:48px"> px</div>
+      <div class="form-row"><label>Location:</label><select id="st-p"><option value="inside">Inside</option><option value="center" selected>Center</option><option value="outside">Outside</option></select></div>
+      <div class="form-row"><label>Blend Mode:</label>${this.blendSelect('st-b', 'source-over')}<span></span></div>
+      <div class="form-row"><label>Opacity:</label><input id="st-o" type="range" min="0" max="100" value="100"><span id="st-ov">100%</span></div>
+      <div class="form-row"><label>Color:</label><input id="st-c" type="color" value="${this.doc.fg}"></div>`
+    const restore = () => {
+      const c = layer.canvas.getContext('2d')
+      c.clearRect(0, 0, layer.canvas.width, layer.canvas.height)
+      c.drawImage(snap, 0, 0)
+    }
+    const live = () => {
+      restore()
+      const size = +body.querySelector('#st-s').value
+      body.querySelector('#st-sn').value = size
+      body.querySelector('#st-ov').textContent = body.querySelector('#st-o').value + '%'
+      this.doc.strokePixels({
+        color: body.querySelector('#st-c').value,
+        size,
+        pos: body.querySelector('#st-p').value,
+        blend: body.querySelector('#st-b').value,
+        opacity: +body.querySelector('#st-o').value / 100,
+        record: false
+      })
+      this.paint()
+    }
+    body.querySelector('#st-s').oninput = live
+    body.querySelector('#st-sn').oninput = () => { body.querySelector('#st-s').value = body.querySelector('#st-sn').value; live() }
+    body.querySelector('#st-p').onchange = live
+    body.querySelector('#st-b').onchange = live
+    body.querySelector('#st-o').oninput = live
+    body.querySelector('#st-c').oninput = live
+    live()
+    const wrap = modal({
+      title: 'Stroke',
+      body,
+      onOk: () => {
+        live()
+        this.doc.pushHistory('Stroke')
+        this.render()
+      }
+    })
+    const revertStroke = () => { restore(); this.render() }
+    wrap.querySelector('.cancel').onclick = () => { revertStroke(); wrap.remove() }
+    wrap.querySelector('.modal-x').addEventListener('click', revertStroke)
+    wrap.addEventListener('click', e => { if (e.target === wrap) revertStroke() })
+  },
+  fillDialog() {
+    const layer = this.doc.currentLayer()
+    if (!layer || layer.locked) { toast('Layer is locked'); return }
+    const body = document.createElement('div')
+    body.className = 'mini-dlg'
+    body.innerHTML = `
+      <div class="form-row"><label>Fill:</label>
+        <select id="fl-src">
+          <option value="fg">Foreground</option>
+          <option value="bg">Background</option>
+          <option value="color">Color</option>
+        </select>
+        <input id="fl-c" type="color" value="${this.doc.fg}" hidden>
+      </div>
+      <div class="form-row"><label>Blend Mode:</label>${this.blendSelect('fl-b', 'source-over')}</div>
+      <div class="form-row"><label>Opacity:</label><input id="fl-o" type="range" min="0" max="100" value="100"><span id="fl-ov">100%</span></div>
+      <div class="form-row"><label></label><label><input id="fl-pt" type="checkbox"${layer.lockTrans || !this.doc.selection ? ' checked' : ''}> Preserve Transparency</label></div>`
+    body.querySelector('#fl-src').onchange = e => { body.querySelector('#fl-c').hidden = e.target.value !== 'color' }
+    body.querySelector('#fl-o').oninput = e => { body.querySelector('#fl-ov').textContent = e.target.value + '%' }
+    modal({
+      title: 'Fill',
+      body,
+      onOk: () => {
+        const src = body.querySelector('#fl-src').value
+        const color = src === 'bg' ? this.doc.bg : src === 'color' ? body.querySelector('#fl-c').value : this.doc.fg
+        this.doc.fillPixels({
+          color,
+          blend: body.querySelector('#fl-b').value,
+          opacity: +body.querySelector('#fl-o').value / 100,
+          preserve: body.querySelector('#fl-pt').checked
+        })
+        this.render()
+      }
+    })
   },
   toggleView(key) {
     this.view[key] = !this.view[key]
@@ -661,17 +1051,103 @@ const app = {
   },
   textFont() {
     const s = this.tools.state
-    return `${s.textBold ? 'bold ' : ''}${s.fontSize}px ${s.fontFamily}`
+    return `${s.textItalic ? 'italic ' : ''}${s.textBold ? 'bold ' : ''}${s.fontSize}px ${s.fontFamily}`
   },
-  beginText(p) {
+  syncTextLayer(ed = this._textEdit) {
+    if (!ed?.layer) return
+    const s = this.tools.state
+    const probe = document.createElement('canvas').getContext('2d')
+    probe.font = ed.font
+    const metrics = probe.measureText(ed.text || ' ')
+    const ascent = metrics.actualBoundingBoxAscent || s.fontSize * 0.8 || 40
+    const descent = metrics.actualBoundingBoxDescent || 8
+    const w = Math.max(2, Math.ceil((ed.text ? metrics.width : 2) + 4))
+    const h = Math.max(2, Math.ceil(ascent + descent) + 4)
+    ed.layer.canvas = createCanvas(w, h)
+    const c = ed.layer.canvas.getContext('2d')
+    c.font = ed.font
+    c.fillStyle = ed.color
+    c.textBaseline = 'alphabetic'
+    c.textAlign = ed.align || 'left'
+    const tx = ed.align === 'center' ? w / 2 : ed.align === 'right' ? w - 2 : 2
+    if (ed.text) c.fillText(ed.text, tx, ascent + 2)
+    const ax = ed.align === 'center' ? w / 2 : ed.align === 'right' ? w : 0
+    ed.layer.x = Math.round(ed.x - ax)
+    ed.layer.y = Math.round(ed.y - ascent)
+    ed.layer.ascent = ascent
+    ed.layer.kind = 'text'
+    ed.layer.text = ed.text
+    ed.layer.font = ed.font
+    ed.layer.color = ed.color
+    ed.layer.align = ed.align || 'left'
+    ed.layer.fontFamily = s.fontFamily
+    ed.layer.fontSize = s.fontSize
+    ed.layer.textBold = !!s.textBold
+    ed.layer.textItalic = !!s.textItalic
+    if (ed.created || ed.layer.name === 'Text' || ed.layer.name === ed.orig?.trim().slice(0, 24)) {
+      ed.layer.name = ed.text.trim().slice(0, 24) || 'Text'
+    }
+    this.paint()
+    renderLayers(this)
+    syncLayerControls(this)
+  },
+  beginText(p, existing) {
+    if (this._textEdit?.layer && existing && this._textEdit.layer === existing) {
+      this.renderOverlay()
+      return
+    }
     this.commitText()
-    this._textEdit = {
-      x: p.x,
-      y: p.y,
-      text: '',
-      color: this.doc.fg,
-      font: this.textFont(),
-      align: this.tools.state.textAlign || 'left'
+    const s = this.tools.state
+    if (existing && existing.kind === 'text') {
+      if (existing.locked) { this.toast('Layer is locked'); return }
+      const i = this.doc.layers.indexOf(existing)
+      if (i >= 0) this.doc.active = i
+      s.fontFamily = existing.fontFamily || s.fontFamily
+      s.fontSize = existing.fontSize || s.fontSize
+      s.textBold = !!existing.textBold
+      s.textItalic = !!existing.textItalic
+      s.textAlign = existing.align || 'left'
+      const w = existing.canvas?.width || 0
+      const ax = existing.align === 'center' ? w / 2 : existing.align === 'right' ? w : 0
+      this._textEdit = {
+        layer: existing,
+        x: existing.x + ax,
+        y: existing.y + (existing.ascent || s.fontSize * 0.8 || 40),
+        text: existing.text || '',
+        orig: existing.text || '',
+        created: false,
+        color: existing.color || this.doc.fg,
+        font: existing.font || this.textFont(),
+        align: existing.align || 'left'
+      }
+      this.setTool('text')
+    } else {
+      const layer = this.doc.addLayer('Text')
+      layer.kind = 'text'
+      layer.text = ''
+      layer.canvas = createCanvas(2, 2)
+      layer.x = Math.round(p.x)
+      layer.y = Math.round(p.y)
+      layer.color = this.doc.fg
+      layer.font = this.textFont()
+      layer.align = s.textAlign || 'left'
+      layer.fontFamily = s.fontFamily
+      layer.fontSize = s.fontSize
+      layer.textBold = !!s.textBold
+      layer.textItalic = !!s.textItalic
+      this.doc.active = this.doc.layers.indexOf(layer)
+      this._textEdit = {
+        layer,
+        x: p.x,
+        y: p.y,
+        text: '',
+        orig: '',
+        created: true,
+        color: this.doc.fg,
+        font: this.textFont(),
+        align: s.textAlign || 'left'
+      }
+      this.render()
     }
     this.renderOverlay()
   },
@@ -679,29 +1155,23 @@ const app = {
     const ed = this._textEdit
     if (!ed) return
     this._textEdit = null
-    const text = cancel ? '' : ed.text
+    const layer = ed.layer
+    const text = cancel ? ed.orig : ed.text
     if (!text) {
+      if (layer && (ed.created || !ed.orig)) {
+        const i = this.doc.layers.indexOf(layer)
+        if (i >= 0 && this.doc.layers.length > 1) {
+          this.doc.layers.splice(i, 1)
+          this.doc.active = Math.min(i, this.doc.layers.length - 1)
+        }
+      }
+      this.render()
       this.renderOverlay()
       return
     }
-    const probe = document.createElement('canvas').getContext('2d')
-    probe.font = ed.font
-    const metrics = probe.measureText(text)
-    const ascent = metrics.actualBoundingBoxAscent || ed.font.match(/(\d+)px/)?.[1] * 0.8 || 40
-    const descent = metrics.actualBoundingBoxDescent || 8
-    const w = Math.max(2, Math.ceil(metrics.width) + 4)
-    const h = Math.max(2, Math.ceil(ascent + descent) + 4)
-    const layer = this.doc.addLayer('Text')
-    layer.canvas = createCanvas(w, h)
-    layer.x = Math.round(ed.x)
-    layer.y = Math.round(ed.y - ascent)
-    const c = layer.canvas.getContext('2d')
-    c.font = ed.font
-    c.fillStyle = ed.color
-    c.textBaseline = 'alphabetic'
-    c.textAlign = 'left'
-    c.fillText(text, 2, ascent + 2)
-    this.doc.pushHistory('Type')
+    ed.text = text
+    if (layer) this.syncTextLayer(ed)
+    if (!cancel && text !== ed.orig) this.doc.pushHistory(ed.created ? 'Type' : 'Edit Type')
     this.render()
   },
   typeKey(e) {
@@ -714,6 +1184,8 @@ const app = {
     else if (e.key === 'Backspace') ed.text = ed.text.slice(0, -1)
     else if (e.key === 'Tab') ed.text += '    '
     else if (e.key.length === 1) ed.text += e.key
+    else return true
+    if (ed.layer) this.syncTextLayer(ed)
     this.renderOverlay()
     return true
   },
@@ -749,14 +1221,7 @@ const app = {
       toast('Clipboard empty — copy an image first')
       return
     }
-    const layer = this.doc.addLayer('Pasted Image')
-    const ctx = layer.canvas.getContext('2d')
-    const img = this._clip
-    const scale = Math.min(1, this.doc.width / img.width, this.doc.height / img.height)
-    const w = img.width * scale
-    const h = img.height * scale
-    ctx.drawImage(img, (this.doc.width - w) / 2, (this.doc.height - h) / 2, w, h)
-    this.doc.pushHistory('Paste')
+    this.doc.placeImage(this._clip, 'Pasted Image')
     this.render()
     toast('Pasted as new layer')
   },
@@ -764,16 +1229,8 @@ const app = {
     const url = URL.createObjectURL(file)
     const img = await loadImage(url)
     URL.revokeObjectURL(url)
-    const layer = this.doc.addLayer(name)
-    const ctx = layer.canvas.getContext('2d')
-    const scale = Math.min(1, this.doc.width / img.width, this.doc.height / img.height)
-    const w = img.width * scale
-    const h = img.height * scale
-    ctx.drawImage(img, (this.doc.width - w) / 2, (this.doc.height - h) / 2, w, h)
-    this.doc.pushHistory('Paste Image')
+    this.doc.placeImage(img, name)
     this.render()
-    renderLayers(this)
-    syncLayerControls(this)
     toast('Pasted as new layer')
   },
   async paste(event) {
@@ -864,34 +1321,10 @@ document.getElementById('layer-del').onclick = () => {
 document.getElementById('layer-mask').onclick = () => { app.doc.addMask(); app.render() }
 document.getElementById('layer-adj').onclick = () => { app.doc.addFillLayer(app.doc.fg); app.render() }
 document.getElementById('layer-group').onclick = () => {
-  const l = app.doc.addLayer('Group')
-  l.name = 'Group'
-  app.doc.pushHistory('New Group')
+  app.doc.groupSelected()
   app.render()
 }
-document.getElementById('layer-fx').onclick = e => {
-  const l = app.doc.currentLayer()
-  if (!l) return
-  document.querySelectorAll('.ctx-menu').forEach(el => el.remove())
-  const menu = document.createElement('div')
-  menu.className = 'ctx-menu'
-  const r = e.currentTarget.getBoundingClientRect()
-  menu.style.left = r.left + 'px'
-  menu.style.bottom = (window.innerHeight - r.top + 4) + 'px'
-  menu.style.top = 'auto'
-  ;[['Drop Shadow', 'shadow'], ['Outer Glow', 'glow'], ['Stroke', 'stroke'], ['Color Overlay', 'overlay']].forEach(([label, kind]) => {
-    const b = document.createElement('button')
-    b.type = 'button'
-    b.textContent = (l.fx?.[kind] ? '✓ ' : '') + label
-    b.onclick = () => { menu.remove(); app.doc.toggleFx(kind); app.render() }
-    menu.appendChild(b)
-  })
-  document.body.appendChild(menu)
-  const close = ev => {
-    if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('pointerdown', close) }
-  }
-  setTimeout(() => document.addEventListener('pointerdown', close), 0)
-}
+document.getElementById('layer-fx').onclick = () => app.layerStyleDialog()
 document.getElementById('lock-all').onclick = () => {
   const l = app.doc.currentLayer()
   if (!l) return
@@ -915,7 +1348,7 @@ document.getElementById('lock-trans').onclick = () => {
 }
 document.getElementById('blend-mode').onchange = e => {
   const l = app.doc.currentLayer()
-  if (l) { l.blend = e.target.value; app.render() }
+  if (l) { l.blend = e.target.value; app.doc.pushHistory('Blend Mode'); app.render() }
 }
 document.getElementById('layer-opacity').oninput = e => {
   const l = app.doc.currentLayer()
@@ -940,7 +1373,7 @@ document.getElementById('layer-fill').oninput = e => {
 document.getElementById('layer-opacity').onchange = () => app.doc.pushHistory('Layer Opacity')
 document.getElementById('layer-fill').onchange = () => app.doc.pushHistory('Layer Fill')
 
-document.getElementById('btn-export').onclick = () => app.exportImage('png')
+document.getElementById('btn-export').onclick = () => app.exportDialog()
 
 document.getElementById('nav-zoom')?.addEventListener('input', e => {
   app.setZoom(+e.target.value / 100)
@@ -959,16 +1392,22 @@ bindBrushPanel('brush-panel-hard', 'hardness')
 bindBrushPanel('brush-panel-op', 'opacity')
 document.getElementById('char-font')?.addEventListener('change', e => {
   app.tools.state.fontFamily = e.target.value
+  if (app._textEdit) { app._textEdit.font = app.textFont(); app.syncTextLayer(); app.renderOverlay() }
   renderOptions(app)
 })
 document.getElementById('char-size')?.addEventListener('input', e => {
   app.tools.state.fontSize = +e.target.value
+  if (app._textEdit) { app._textEdit.font = app.textFont(); app.syncTextLayer(); app.renderOverlay() }
   renderOptions(app)
 })
 document.querySelectorAll('[data-para-align]').forEach(b => {
   b.onclick = () => {
     app.tools.state.textAlign = b.dataset.paraAlign
-    app.toast('Paragraph: ' + b.dataset.paraAlign)
+    if (app._textEdit) {
+      app._textEdit.align = b.dataset.paraAlign
+      app.syncTextLayer()
+      app.renderOverlay()
+    }
   }
 })
 fileOpen.onchange = e => { const f = e.target.files[0]; if (f) app.loadFromFile(f, false); e.target.value = '' }
@@ -980,6 +1419,15 @@ wrap.addEventListener('pointerdown', e => {
   if (app.tool === 'text') {
     app.tools.down(e)
     return
+  }
+  if (app.tool === 'move' || app.tool === 'path') {
+    const p = app.screenToDoc(e.clientX, e.clientY)
+    const hit = app.doc.hitLayerAt(p.x, p.y)
+    const hitLayer = hit >= 0 ? app.doc.layers[hit] : null
+    if (hitLayer?.kind === 'text' && e.detail === 2) {
+      app.beginText(p, hitLayer)
+      return
+    }
   }
   wrap.setPointerCapture(e.pointerId)
   app.tools.down(e)
@@ -999,6 +1447,17 @@ wrap.addEventListener('pointermove', e => {
   }
 })
 wrap.addEventListener('pointerup', e => app.tools.up(e))
+wrap.addEventListener('dblclick', e => {
+  if (e.button !== 0) return
+  if (app.tool !== 'move' && app.tool !== 'path' && app.tool !== 'text') return
+  const p = app.screenToDoc(e.clientX, e.clientY)
+  const hit = app.doc.hitLayerAt(p.x, p.y)
+  const hitLayer = hit >= 0 ? app.doc.layers[hit] : null
+  if (hitLayer?.kind === 'text') {
+    e.preventDefault()
+    app.beginText(p, hitLayer)
+  }
+})
 wrap.addEventListener('pointercancel', e => app.tools.up(e))
 wrap.addEventListener('wheel', e => {
   e.preventDefault()
@@ -1016,13 +1475,16 @@ window.addEventListener('keydown', e => {
     if (k === 'n' && e.shiftKey) { e.preventDefault(); app.doc.addLayer(); app.doc.pushHistory('New Layer'); app.render() }
     else if (k === 'n') { e.preventDefault(); app.newDocDialog() }
     else if (k === 'o') { e.preventDefault(); app.openFile() }
-    else if (k === 's') { e.preventDefault(); app.exportImage('png') }
+    else if (k === 's' && e.shiftKey) { e.preventDefault(); app.exportDialog() }
+    else if (k === 's') { e.preventDefault(); app.saveProject() }
     else if (k === 'z' && e.shiftKey) { e.preventDefault(); app.doc.redo() }
     else if (k === 'z') { e.preventDefault(); app.doc.undo() }
     else if (k === 'y') { e.preventDefault(); app.doc.redo() }
     else if (k === 'j' && e.shiftKey) { e.preventDefault(); app.doc.layerViaCopy(true) }
     else if (k === 'j') { e.preventDefault(); app.doc.selection ? app.doc.layerViaCopy(false) : app.doc.duplicateLayer() }
     else if (k === 'g' && e.altKey) { e.preventDefault(); app.doc.toggleClip() }
+    else if (k === 'g' && e.shiftKey) { e.preventDefault(); app.doc.ungroup(); app.render() }
+    else if (k === 'g') { e.preventDefault(); app.doc.groupSelected(); app.render() }
     else if (k === 'e' && e.shiftKey) { e.preventDefault(); app.doc.mergeVisible() }
     else if (k === 'e') { e.preventDefault(); app.doc.mergeDown() }
     else if (k === '[' && e.shiftKey) { e.preventDefault(); app.doc.sendToBack() }
@@ -1030,7 +1492,7 @@ window.addEventListener('keydown', e => {
     else if (k === '[') { e.preventDefault(); app.doc.moveLayer(-1) }
     else if (k === ']') { e.preventDefault(); app.doc.moveLayer(1) }
     else if (k === 'a') { e.preventDefault(); app.selectAll() }
-    else if (k === 'd') { e.preventDefault(); app.doc.selection = null; app.renderOverlay() }
+    else if (k === 'd') { e.preventDefault(); app.doc.selection = null; app.tools.state.selXf = false; app.render(); app.renderOverlay() }
     else if (k === 'i' && e.shiftKey) { e.preventDefault(); app.invertSelection() }
     else if (k === 'c') { e.preventDefault(); app.copy() }
     else if (k === 'x') { e.preventDefault(); app.cut() }
@@ -1045,6 +1507,7 @@ window.addEventListener('keydown', e => {
     else if (k === 't') { e.preventDefault(); app.tools.state.showTransform = true; app.setTool('move'); app.renderOverlay() }
     return
   }
+  if (k === 'f5' && e.shiftKey) { e.preventDefault(); app.fillDialog(); return }
   if (k === 'v') app.setTool('move')
   else if (k === 'm') {
     const order = ['marquee', 'ellipse-marquee', 'row-marquee', 'col-marquee']
@@ -1125,7 +1588,7 @@ window.addEventListener('keydown', e => {
     if (app.tools.state.cropRect) { e.preventDefault(); app.commitCrop() }
   } else if (k === 'escape') {
     if (app.tools.state.cropRect) app.cancelCrop()
-    else { app.doc.selection = null; app.renderOverlay() }
+    else { app.doc.selection = null; app.tools.state.selXf = false; app.renderOverlay() }
   }
 })
 window.addEventListener('keyup', e => {
@@ -1240,20 +1703,13 @@ app.setFg('#ff3b30')
 app.setBg('#ffffff')
 
 const adjRoot = document.getElementById('adjust-list')
-ADJUST_DEFS.forEach(a => {
-  const row = document.createElement('div')
-  row.className = 'adj'
-  row.innerHTML = `<span>${a.label}</span><input type="range" min="${a.min}" max="${a.max}" value="0" data-id="${a.id}"><span class="val">0</span>`
-  adjRoot.appendChild(row)
-})
-adjRoot.addEventListener('pointerdown', () => {
-  const layer = app.doc.currentLayer()
-  if (!layer || app.adjBase) return
-  app.adjBase = document.createElement('canvas')
-  app.adjBase.width = layer.canvas.width
-  app.adjBase.height = layer.canvas.height
-  app.adjBase.getContext('2d').drawImage(layer.canvas, 0, 0)
-})
+  ADJUST_DEFS.forEach(a => {
+    const row = document.createElement('div')
+    row.className = 'adj'
+    const start = a.id === 'gamma' ? 100 : 0
+    row.innerHTML = `<span>${a.label}</span><input type="range" min="${a.min}" max="${a.max}" value="${start}" data-id="${a.id}"><span class="val">${start}</span>`
+    adjRoot.appendChild(row)
+  })
 adjRoot.addEventListener('input', e => {
   const id = e.target.dataset.id
   if (!id) return
@@ -1269,7 +1725,16 @@ adjRoot.addEventListener('input', e => {
   }
   app.applyLiveAdjust()
 })
-adjRoot.addEventListener('pointerup', () => app.commitAdjust())
+const adjBtns = document.createElement('div')
+adjBtns.className = 'blend-row'
+adjBtns.innerHTML = '<button type="button" id="adj-apply" class="btn-accent">Apply</button><button type="button" id="adj-reset">Reset</button><button type="button" id="adj-cancel">Cancel</button>'
+adjRoot.parentElement.appendChild(adjBtns)
+document.getElementById('adj-apply').onclick = () => app.commitAdjust()
+document.getElementById('adj-reset').onclick = () => {
+  app.resetAdjustSliders()
+  if (app.adjBase) app.applyLiveAdjust()
+}
+document.getElementById('adj-cancel').onclick = () => app.cancelAdjust()
 
 function tick() {
   app.marching = (app.marching + 0.4) % 10
@@ -1283,7 +1748,9 @@ window.addEventListener('dragover', e => { e.preventDefault() })
 window.addEventListener('drop', e => {
   e.preventDefault()
   const f = e.dataTransfer.files[0]
-  if (f && f.type.startsWith('image/')) app.loadFromFile(f, false)
+  if (!f) return
+  const isProject = /\.(pixora|json)$/i.test(f.name)
+  app.loadFromFile(f, !isProject && e.shiftKey)
 })
 
 seedDemo(app)
