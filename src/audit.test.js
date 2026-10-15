@@ -496,5 +496,101 @@ function paint(layer, color, x = 0, y = 0, w = null, h = null) {
   ok('png export keeps transparency', !!ppx && ppx[3] === 0, `rgba=${ppx}`)
 }
 
+// 9. mergeSelected combines multiple selected layers into the bottom one
+{
+  const doc = new Document(20, 20, null)
+  const a = doc.addLayer('A')
+  paint(a, '#ff0000')
+  const b = doc.addLayer('B')
+  paint(b, '#00ff00')
+  const c = doc.addLayer('C')
+  paint(c, '#0000ff')
+  doc.selectLayer(doc.layers.indexOf(a), false)
+  doc.selectLayer(doc.layers.indexOf(c), true)
+  const before = doc.layers.length
+  doc.mergeSelected()
+  ok('mergeSelected reduces layer count', doc.layers.length === before - 1, `len=${doc.layers.length} before=${before}`)
+  const merged = doc.currentLayer()
+  const px = merged.canvas.getContext('2d').getImageData(10, 10, 1, 1).data
+  ok('mergeSelected bakes topmost visible pixel', px[2] > 200 && px[3] > 200, `rgba=${Array.from(px)}`)
+  ok('mergeSelected selects merged layer', doc.selected.has(merged.id), 'selected')
+}
+
+// 10. mergeSelected falls back to mergeDown with a single layer
+{
+  const doc = new Document(20, 20, null)
+  const a = doc.addLayer('A')
+  paint(a, '#ff0000')
+  const b = doc.addLayer('B')
+  paint(b, '#00ff00')
+  doc.selectLayer(doc.layers.indexOf(b), false)
+  const before = doc.layers.length
+  doc.mergeSelected()
+  ok('mergeSelected single falls back to mergeDown', doc.layers.length === before - 1, `len=${doc.layers.length}`)
+}
+
+// 11. new layer added while a group is active goes inside that group
+{
+  const doc = new Document(30, 30, null)
+  const a = doc.addLayer('A')
+  doc.selectLayer(doc.layers.indexOf(a), false)
+  const g = doc.groupSelected()          // wraps A into a group
+  doc.active = doc.layers.indexOf(g)
+  doc.selected = new Set([g.id])
+  const inner = doc.addLayer('Inner')
+  ok('addLayer inside group sets parentId', inner.parentId === g.id, `parent=${inner.parentId}`)
+  const gIdx = doc.layers.indexOf(g)
+  const innerIdx = doc.layers.indexOf(inner)
+  const maxChild = Math.max(...doc.layers.map((l, i) => l.parentId === g.id ? i : -1))
+  ok('addLayer appends inside group', innerIdx === maxChild && innerIdx > gIdx, `inner=${innerIdx} g=${gIdx}`)
+}
+
+// 12. reparentLayer moves a layer into a group (drag and drop)
+{
+  const doc = new Document(30, 30, null)
+  const a = doc.addLayer('A')
+  const b = doc.addLayer('B')
+  doc.selectLayer(doc.layers.indexOf(b), false)
+  const g = doc.groupSelected()          // wraps B
+  const loose = doc.addLayer('Loose')
+  const from = doc.layers.indexOf(loose)
+  doc.reparentLayer(from, doc.layers.indexOf(g))
+  ok('reparentLayer nests into group', loose.parentId === g.id, `parent=${loose.parentId}`)
+  const gIdx = doc.layers.indexOf(g)
+  const looseIdx = doc.layers.indexOf(loose)
+  ok('reparentLayer inserts right after group', looseIdx === gIdx + 1, `loose=${looseIdx} g=${gIdx}`)
+}
+
+// 13. reparentLayer refuses to move a group into its own descendant
+{
+  const doc = new Document(30, 30, null)
+  const a = doc.addLayer('A')
+  doc.selectLayer(doc.layers.indexOf(a), false)
+  const outer = doc.groupSelected()
+  doc.active = doc.layers.indexOf(outer)
+  doc.selected = new Set([outer.id])
+  const inner = doc.groupSelected()      // nested group inside outer
+  const from = doc.layers.indexOf(outer)
+  const to = doc.layers.indexOf(inner)
+  const snapshotParents = doc.layers.map(l => l.parentId)
+  doc.reparentLayer(from, to)
+  const unchanged = doc.layers.every((l, i) => l.parentId === snapshotParents[i])
+  ok('reparentLayer blocks group cycles', unchanged, 'unchanged')
+}
+
+// 14. groupSelected wraps selected layers so they become children
+{
+  const doc = new Document(30, 30, null)
+  const a = doc.addLayer('A')
+  const b = doc.addLayer('B')
+  const c = doc.addLayer('C')
+  doc.selectLayer(doc.layers.indexOf(a), false)
+  doc.selectLayer(doc.layers.indexOf(c), true)
+  const g = doc.groupSelected()
+  const kids = doc.layers.filter(l => l.parentId === g.id).map(l => l.name).sort()
+  ok('groupSelected nests selected layers', kids.join(',') === 'A,C', `kids=${kids.join(',')}`)
+  ok('groupSelected keeps B outside group', b.parentId === null, `b.parent=${b.parentId}`)
+}
+
 console.log(`\n${failures.length ? failures.length + ' failing' : 'all audit checks passed'}`)
 if (failures.length) process.exitCode = 1

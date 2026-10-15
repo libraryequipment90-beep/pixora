@@ -131,7 +131,8 @@ export function buildMenus(app) {
         { label: 'Color Overlay', fn: () => app.layerStyleDialog('overlay') },
         { label: 'Outer Glow', fn: () => app.layerStyleDialog('glow') },
         { hr: true },
-        { label: 'Merge Down', kbd: 'Ctrl+E', fn: () => app.doc.mergeDown() },
+        { label: 'Merge Layers', kbd: 'Ctrl+E', fn: () => app.doc.mergeSelected() },
+        { label: 'Merge Down', fn: () => app.doc.mergeDown() },
         { label: 'Merge Visible', kbd: 'Ctrl+Shift+E', fn: () => app.doc.mergeVisible() },
         { label: 'Flatten Image', fn: () => app.doc.flatten() },
         { hr: true },
@@ -515,6 +516,7 @@ function showLayerMenu(app, i, x, y) {
     ['Stroke…', () => app.strokeDialog()],
     ['Fill…', () => app.fillDialog()],
     null,
+    ['Merge Layers', () => app.doc.mergeSelected()],
     ['Merge Down', () => app.doc.mergeDown()],
     ['Merge Visible', () => app.doc.mergeVisible()],
     ['Flatten Image', () => app.doc.flatten()],
@@ -543,6 +545,16 @@ function showLayerMenu(app, i, x, y) {
     if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('pointerdown', close) }
   }
   setTimeout(() => document.addEventListener('pointerdown', close), 0)
+}
+
+function layerTypeIcon(layer) {
+  if (layer.kind === 'group') {
+    return '<span class="type-icon group-icon" title="Group"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M1.6 4.3a1.2 1.2 0 0 1 1.2-1.2h3.1l1.3 1.5h6a1.2 1.2 0 0 1 1.2 1.2v5.6a1.2 1.2 0 0 1-1.2 1.2H2.8a1.2 1.2 0 0 1-1.2-1.2z" fill="currentColor"/></svg></span>'
+  }
+  if (layer.kind === 'text') {
+    return '<span class="type-icon text-icon" title="Text layer"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M3 3.4h10M8 3.4v9.2M6 12.6h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>'
+  }
+  return '<span class="type-icon layer-icon" title="Layer"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M8 1.9 13.8 5 8 8.1 2.2 5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M2.6 7.5 8 10.3l5.4-2.8M2.6 9.9 8 12.7l5.4-2.8" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round" opacity="0.7"/></svg></span>'
 }
 
 export function renderLayers(app) {
@@ -578,8 +590,10 @@ export function renderLayers(app) {
     const toggle = layer.kind === 'group'
       ? `<span class="fold" title="Collapse">${layer.collapsed ? '▸' : '▾'}</span>`
       : '<span class="fold"></span>'
-    li.innerHTML = `${toggle}<span class="eye" title="Visibility">${layer.visible ? '◉' : '○'}</span>`
-    li.appendChild(thumb)
+    li.innerHTML = `${toggle}<span class="eye" title="Visibility">${layer.visible ? '◉' : '○'}</span>${layerTypeIcon(layer)}`
+    const thumbs = document.createElement('div')
+    thumbs.className = 'layer-thumbs'
+    thumbs.appendChild(thumb)
     if (layer.mask) {
       const mt = document.createElement('canvas')
       mt.className = 'mask-thumb' + (layer.maskEnabled === false ? ' off' : '')
@@ -592,8 +606,9 @@ export function renderLayers(app) {
         layer.maskEnabled = layer.maskEnabled === false
         app.render()
       })
-      li.appendChild(mt)
+      thumbs.appendChild(mt)
     }
+    li.appendChild(thumbs)
     const mid = document.createElement('div')
     mid.className = 'layer-mid'
     const name = document.createElement('input')
@@ -687,18 +702,20 @@ export function renderLayers(app) {
       e.dataTransfer.setData('text/plain', String(i))
       li.classList.add('dragging')
     })
-    li.addEventListener('dragend', () => li.classList.remove('dragging'))
-    li.addEventListener('dragover', e => { e.preventDefault() })
+    li.addEventListener('dragend', () => { li.classList.remove('dragging'); li.classList.remove('drop-into') })
+    li.addEventListener('dragover', e => {
+      e.preventDefault()
+      if (layer.kind === 'group') li.classList.add('drop-into')
+    })
+    li.addEventListener('dragleave', () => li.classList.remove('drop-into'))
     li.addEventListener('drop', e => {
       e.preventDefault()
+      li.classList.remove('drop-into')
       const from = +e.dataTransfer.getData('text/plain')
-      const to = i
-      if (Number.isNaN(from) || from === to) return
-      const [moved] = app.doc.layers.splice(from, 1)
-      app.doc.layers.splice(to, 0, moved)
-      app.doc.active = to
-      app.doc.pushHistory('Reorder Layers')
+      if (Number.isNaN(from) || from === i) return
+      app.doc.reparentLayer(from, i)
       app.render()
+      syncLayerControls(app)
     })
     list.appendChild(li)
   })

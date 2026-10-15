@@ -1314,6 +1314,7 @@ document.getElementById('layer-add').onclick = () => {
   app.render()
 }
 document.getElementById('layer-dup').onclick = () => { app.doc.duplicateLayer(); app.render() }
+document.getElementById('layer-merge').onclick = () => { app.doc.mergeSelected(); app.render() }
 document.getElementById('layer-del').onclick = () => {
   app.doc.deleteLayer()
   app.render()

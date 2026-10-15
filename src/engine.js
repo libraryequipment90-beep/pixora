@@ -248,10 +248,18 @@ export class Document {
       y: 0
     }
     const cur = this.layers[this.active]
-    if (cur?.kind === 'group') layer.parentId = cur.id
-    else if (cur?.parentId) layer.parentId = cur.parentId
-    this.layers.push(layer)
-    this.active = this.layers.length - 1
+    let insertAt = this.layers.length
+    if (cur?.kind === 'group') {
+      layer.parentId = cur.id
+      insertAt = this.layers.indexOf(cur)
+      this.layers.forEach((l, i) => { if (l.parentId === cur.id) insertAt = Math.max(insertAt, i) })
+      insertAt += 1
+    } else if (cur?.parentId) {
+      layer.parentId = cur.parentId
+      insertAt = this.layers.indexOf(cur) + 1
+    }
+    this.layers.splice(insertAt, 0, layer)
+    this.active = this.layers.indexOf(layer)
     this.selected = new Set([layer.id])
     this.emit()
     return layer
@@ -1117,6 +1125,60 @@ export class Document {
     this.layers.unshift(layer)
     this.active = 0
     this.pushHistory('Send to Back')
+    this.emit()
+  }
+
+  mergeSelected() {
+    const idxs = this.selectedIndices().filter(i => this.layers[i] && this.layers[i].kind !== 'group')
+    if (idxs.length < 2) { this.mergeDown(); return }
+    idxs.sort((a, b) => a - b)
+    const target = this.layers[idxs[0]]
+    const out = createCanvas(this.width, this.height)
+    const ctx = out.getContext('2d')
+    for (const i of idxs) this.drawLayerPixels(ctx, this.layers[i])
+    const removeIds = new Set(idxs.slice(1).map(i => this.layers[i].id))
+    target.canvas = out
+    target.x = 0
+    target.y = 0
+    target.opacity = 1
+    target.fill = 1
+    target.blend = 'source-over'
+    target.mask = null
+    target.fx = defaultFx()
+    target.clip = false
+    target.kind = 'raster'
+    this.layers = this.layers.filter(l => !removeIds.has(l.id))
+    this.active = this.layers.indexOf(target)
+    this.selected = new Set([target.id])
+    this.pushHistory('Merge Layers')
+    this.emit()
+  }
+
+  reparentLayer(from, to) {
+    if (from === to || from < 0 || to < 0 || from >= this.layers.length || to >= this.layers.length) return
+    const moved = this.layers[from]
+    const target = this.layers[to]
+    if (!moved || !target) return
+    if (moved.kind === 'group') {
+      let p = target.parentId
+      while (p) {
+        if (p === moved.id) return
+        const par = this.layers.find(l => l.id === p)
+        p = par ? par.parentId : null
+      }
+    }
+    this.layers.splice(from, 1)
+    const at = this.layers.indexOf(target)
+    if (target.kind === 'group') {
+      moved.parentId = target.id
+      this.layers.splice(at + 1, 0, moved)
+    } else {
+      moved.parentId = target.parentId || null
+      this.layers.splice(at, 0, moved)
+    }
+    this.active = this.layers.indexOf(moved)
+    this.selected = new Set([moved.id])
+    this.pushHistory('Reorder Layers')
     this.emit()
   }
 
