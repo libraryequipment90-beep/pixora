@@ -136,7 +136,12 @@ function mockDom() {
     scale() {}
     setLineDash() {}
     fillText() {}
-    measureText() { return { width: 10, actualBoundingBoxAscent: 8, actualBoundingBoxDescent: 2 } }
+    measureText(t) {
+      const m = /(\d+(?:\.\d+)?)px/.exec(this.font || '')
+      const size = m ? +m[1] : 10
+      const str = t == null ? ' ' : String(t)
+      return { width: str.length * size * 0.55, actualBoundingBoxAscent: size * 0.8, actualBoundingBoxDescent: size * 0.2 }
+    }
     createImageData(w, h) { return new ImageData(w, h) }
     getImageData(x, y, w, h) {
       const out = new ImageData(w, h)
@@ -608,6 +613,74 @@ function paint(layer, color, x = 0, y = 0, w = null, h = null) {
   ok('mixed selection groups group + layer', gIn && cIn, `g=${gIn} c=${cIn}`)
   ok('mixed grouping keeps nested child', doc.layers.find(l => l.id === b.id).parentId === g.id, 'B stays in g')
   ok('mixed grouping does not duplicate descendants', doc.layers.filter(l => l.parentId === ng.id).length === 2, `kids=${doc.layers.filter(l => l.parentId === ng.id).length}`)
+}
+
+// 16. scaling a text layer re-renders it instead of upscaling pixels
+{
+  const doc = new Document(200, 200, null)
+  const layer = doc.addLayer('Hello')
+  layer.kind = 'text'
+  layer.text = 'Hello'
+  layer.fontFamily = 'Arial'
+  layer.fontSize = 40
+  layer.color = '#ffffff'
+  layer.align = 'left'
+  layer.textBold = false
+  layer.textItalic = false
+  doc.renderTextLayer(layer)
+  const startW = layer.canvas.width
+  const startH = layer.canvas.height
+  doc.scaleLayerTo(layer, 10, 10, Math.round(startW * 2), Math.round(startH * 2))
+  ok('text stays a text layer after scaling', layer.kind === 'text', layer.kind)
+  ok('scaling keeps text content', layer.text === 'Hello', layer.text)
+  ok('scaling grows font size proportionally', Math.abs(layer.fontSize - 80) <= 2, `fontSize=${layer.fontSize}`)
+  ok('scaling grows canvas height', layer.canvas.height > startH, `${startH} -> ${layer.canvas.height}`)
+  ok('font string matches new size', /8[0-2]px/.test(layer.font || ''), layer.font)
+  ok('scaled text is positioned at requested origin', layer.x === 10 && layer.y === 10, `x=${layer.x} y=${layer.y}`)
+}
+
+// 17. scaling a text layer down keeps it editable and crisp
+{
+  const doc = new Document(200, 200, null)
+  const layer = doc.addLayer('T')
+  layer.kind = 'text'
+  layer.text = 'T'
+  layer.fontFamily = 'Arial'
+  layer.fontSize = 100
+  layer.color = '#ffffff'
+  layer.align = 'left'
+  doc.renderTextLayer(layer)
+  const startH = layer.canvas.height
+  doc.scaleLayerTo(layer, 0, 0, layer.canvas.width, Math.round(startH / 2))
+  ok('scaling down keeps text kind', layer.kind === 'text', layer.kind)
+  ok('scaling down halves font size', Math.abs(layer.fontSize - 50) <= 2, `fontSize=${layer.fontSize}`)
+  ok('scaling down shrinks canvas', layer.canvas.height < startH, `${startH} -> ${layer.canvas.height}`)
+}
+
+// 18. scaling a raster layer resizes its bitmap
+{
+  const doc = new Document(100, 100, null)
+  const layer = doc.addLayer('Raster')
+  paint(layer, '#ff0000')
+  doc.scaleLayerTo(layer, 0, 0, 50, 50)
+  ok('raster scaling resizes canvas', layer.canvas.width === 50 && layer.canvas.height === 50, `${layer.canvas.width}x${layer.canvas.height}`)
+  ok('raster scaling keeps kind raster', layer.kind === 'raster', layer.kind)
+}
+
+// 19. rendering text sets caret anchor metadata used for editing
+{
+  const doc = new Document(120, 120, null)
+  const layer = doc.addLayer('Edit')
+  layer.kind = 'text'
+  layer.text = 'Edit'
+  layer.fontFamily = 'Arial'
+  layer.fontSize = 30
+  layer.color = '#000000'
+  layer.align = 'center'
+  const r = doc.renderTextLayer(layer)
+  ok('renderTextLayer returns ascent', r && r.ascent > 0, `ascent=${r && r.ascent}`)
+  ok('renderTextLayer stores ascent on layer', layer.ascent === r.ascent, `${layer.ascent}`)
+  ok('center-aligned text canvas is wider than zero', layer.canvas.width > 2, `w=${layer.canvas.width}`)
 }
 
 console.log(`\n${failures.length ? failures.length + ' failing' : 'all audit checks passed'}`)

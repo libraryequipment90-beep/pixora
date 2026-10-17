@@ -1056,36 +1056,23 @@ const app = {
   syncTextLayer(ed = this._textEdit) {
     if (!ed?.layer) return
     const s = this.tools.state
-    const probe = document.createElement('canvas').getContext('2d')
-    probe.font = ed.font
-    const metrics = probe.measureText(ed.text || ' ')
-    const ascent = metrics.actualBoundingBoxAscent || s.fontSize * 0.8 || 40
-    const descent = metrics.actualBoundingBoxDescent || 8
-    const w = Math.max(2, Math.ceil((ed.text ? metrics.width : 2) + 4))
-    const h = Math.max(2, Math.ceil(ascent + descent) + 4)
-    ed.layer.canvas = createCanvas(w, h)
-    const c = ed.layer.canvas.getContext('2d')
-    c.font = ed.font
-    c.fillStyle = ed.color
-    c.textBaseline = 'alphabetic'
-    c.textAlign = ed.align || 'left'
-    const tx = ed.align === 'center' ? w / 2 : ed.align === 'right' ? w - 2 : 2
-    if (ed.text) c.fillText(ed.text, tx, ascent + 2)
+    const layer = ed.layer
+    layer.text = ed.text
+    layer.color = ed.color
+    layer.align = ed.align || 'left'
+    layer.fontFamily = s.fontFamily
+    layer.fontSize = s.fontSize
+    layer.textBold = !!s.textBold
+    layer.textItalic = !!s.textItalic
+    layer.kind = 'text'
+    const rendered = this.doc.renderTextLayer(layer)
+    const ascent = rendered?.ascent || s.fontSize * 0.8 || 40
+    const w = layer.canvas.width
     const ax = ed.align === 'center' ? w / 2 : ed.align === 'right' ? w : 0
-    ed.layer.x = Math.round(ed.x - ax)
-    ed.layer.y = Math.round(ed.y - ascent)
-    ed.layer.ascent = ascent
-    ed.layer.kind = 'text'
-    ed.layer.text = ed.text
-    ed.layer.font = ed.font
-    ed.layer.color = ed.color
-    ed.layer.align = ed.align || 'left'
-    ed.layer.fontFamily = s.fontFamily
-    ed.layer.fontSize = s.fontSize
-    ed.layer.textBold = !!s.textBold
-    ed.layer.textItalic = !!s.textItalic
-    if (ed.created || ed.layer.name === 'Text' || ed.layer.name === ed.orig?.trim().slice(0, 24)) {
-      ed.layer.name = ed.text.trim().slice(0, 24) || 'Text'
+    layer.x = Math.round(ed.x - ax)
+    layer.y = Math.round(ed.y - ascent)
+    if (ed.created || layer.name === 'Text' || layer.name === ed.orig?.trim().slice(0, 24)) {
+      layer.name = ed.text.trim().slice(0, 24) || 'Text'
     }
     this.paint()
     renderLayers(this)

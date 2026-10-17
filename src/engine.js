@@ -906,11 +906,59 @@ export class Document {
     layer.font = ''
   }
 
+  textFontString(layer, size) {
+    const px = Math.max(1, Math.round(size || 1))
+    const italic = layer.textItalic ? 'italic ' : ''
+    const bold = layer.textBold ? 'bold ' : ''
+    return `${italic}${bold}${px}px ${layer.fontFamily || 'Arial'}`
+  }
+
+  renderTextLayer(layer, opts = {}) {
+    if (!layer || layer.kind !== 'text') return null
+    const size = Math.max(1, Math.round(opts.fontSize || layer.fontSize || 48))
+    const font = this.textFontString(layer, size)
+    const probe = createCanvas(1, 1).getContext('2d')
+    probe.font = font
+    const text = layer.text || ''
+    const metrics = probe.measureText(text || ' ')
+    const ascent = Math.ceil(metrics.actualBoundingBoxAscent || size * 0.8)
+    const descent = Math.ceil(metrics.actualBoundingBoxDescent || size * 0.2) || 2
+    const w = Math.max(2, Math.ceil((text ? metrics.width : 2) + 4))
+    const h = Math.max(2, ascent + descent + 4)
+    const canvas = createCanvas(w, h)
+    const ctx = canvas.getContext('2d')
+    ctx.font = font
+    ctx.fillStyle = layer.color || '#000000'
+    ctx.textBaseline = 'alphabetic'
+    ctx.textAlign = layer.align || 'left'
+    const tx = layer.align === 'center' ? w / 2 : layer.align === 'right' ? w - 2 : 2
+    if (text) ctx.fillText(text, tx, ascent + 2)
+    layer.canvas = canvas
+    layer.font = font
+    layer.fontSize = size
+    layer.ascent = ascent
+    return { canvas, ascent, descent, width: w, height: h }
+  }
+
   scaleLayerTo(layer, x, y, w, h) {
     if (!layer || layer.locked || layer.lockPos || layer.kind === 'group') return
-    this.rasterizeText(layer)
     w = Math.max(1, Math.round(w))
     h = Math.max(1, Math.round(h))
+    if (layer.kind === 'text') {
+      const prevH = Math.max(1, layer.canvas.height)
+      const ratio = h / prevH
+      const nextSize = Math.max(1, (layer.fontSize || prevH) * ratio)
+      this.renderTextLayer(layer, { fontSize: nextSize })
+      layer.x = Math.round(x)
+      layer.y = Math.round(y)
+      if (layer.mask) {
+        const m = createCanvas(layer.canvas.width, layer.canvas.height)
+        m.getContext('2d').drawImage(layer.mask, 0, 0, layer.canvas.width, layer.canvas.height)
+        layer.mask = m
+      }
+      return
+    }
+    this.rasterizeText(layer)
     const next = createCanvas(w, h)
     next.getContext('2d').drawImage(layer.canvas, 0, 0, w, h)
     layer.canvas = next
