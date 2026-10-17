@@ -507,14 +507,14 @@ select {
 .layer-item .type-icon svg { display: block; }
 .layer-item .folder-icon { color: #c7c7c7; }
 .layer-item .layer-thumbs { display: flex; align-items: center; justify-content: center; gap: 3px; min-height: 24px; min-width: 38px; }
-.layer-item.group .layer-thumbs { justify-content: flex-end; padding-right: 4px; }
-.layer-item .g-tag { font-size: 9px; color: #c9a227; letter-spacing: 0.4px; }
 .layer-item canvas { width: 36px; height: 24px; background: #222; border: 1px solid #111; }
 .layer-item .mask-thumb { outline: 1px solid #888; }
 .layer-item .mask-thumb.off { opacity: 0.35; }
 .layer-item .eye { color: var(--text-dim); text-align: center; }
-.layer-item .lock { color: var(--text-dim); text-align: center; font-size: 10px; }
-.layer-item .layer-mid { min-width: 0; display: flex; flex-direction: column; }
+.layer-item .lock { color: var(--text-dim); display: flex; align-items: center; justify-content: center; line-height: 0; }
+.layer-item .lock svg { display: block; }
+.layer-item .layer-mid { min-width: 0; display: flex; flex-direction: row; align-items: center; gap: 5px; }
+.layer-item .layer-mid input { flex: 1; }
 .layer-item input { background: transparent; border: none; width: 100%; padding: 2px 0; }
 .layer-item .fx-tag { font-size: 9px; color: var(--accent); letter-spacing: 0.4px; }
 .layer-item .t-tag { font-size: 9px; color: #7ec8ff; letter-spacing: 0.4px; }

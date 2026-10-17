@@ -626,13 +626,6 @@ export function renderLayers(app) {
        app.doc.pushHistory('Rename Layer')
      })
     mid.appendChild(name)
-    if (layer.kind === 'group') {
-      const t = document.createElement('span')
-      t.className = 'g-tag'
-      t.textContent = 'G'
-      t.title = 'Layer group'
-      mid.appendChild(t)
-    }
     if (layer.kind === 'text') {
       const t = document.createElement('span')
       t.className = 't-tag'
@@ -656,7 +649,12 @@ export function renderLayers(app) {
     const flags = document.createElement('span')
     flags.className = 'lock'
     flags.title = layer.lockPos ? 'Background (fixed)' : (layer.locked ? 'Locked' : '')
-    flags.textContent = layer.lockPos ? 'B' : (layer.locked ? 'L' : (layer.lockTrans ? 'T' : ''))
+    if (layer.lockPos || layer.locked) {
+      flags.innerHTML = '<svg viewBox="0 0 12 14" width="10" height="12" aria-hidden="true"><path d="M6 0a4 4 0 0 0-4 4v2H1v8h10V6H9V4a3 3 0 0 0-3-3zm0 1.5A2.5 2.5 0 0 1 8.5 4v2h-5V4A2.5 2.5 0 0 1 6 1.5z" fill="currentColor"/></svg>'
+    } else if (layer.lockTrans) {
+      flags.title = 'Position locked'
+      flags.innerHTML = '<svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M5.25 0h1.5v1.9l1.2-1.2 1.05 1.05L6 4.75 3.1 1.75 4.15.7l1.1 1.2zM0 5.25h1.9l-1.2-1.2L1.75 3 4.75 6 1.75 8.9.7 7.85l1.2-1.1H0zm12 0v1.5h-1.9l1.2 1.2-1.05 1.05L7.25 6 10.25 3.1l1.05 1.05-1.2 1.1zM5.25 12v-1.9l-1.2 1.2-1.05-1.05L6 7.25l2.9 3-1.05 1.05-1.1-1.2V12z" fill="currentColor"/></svg>'
+    }
     flags.addEventListener('click', (e) => {
       e.stopPropagation()
       if (layer.lockPos) layer.lockPos = false
