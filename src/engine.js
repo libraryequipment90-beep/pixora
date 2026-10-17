@@ -339,8 +339,8 @@ export class Document {
 
   groupSelected() {
     const idxs = this.selectedIndices()
-    const kids = idxs.map(i => this.layers[i]).filter(l => l && l.kind !== 'group')
-    if (!kids.length) {
+    const picked = idxs.map(i => this.layers[i]).filter(Boolean)
+    if (!picked.length) {
       const g = this.addLayer('Group')
       g.kind = 'group'
       g.name = 'Group'
@@ -353,6 +353,17 @@ export class Document {
       this.emit()
       return g
     }
+    const pickedIds = new Set(picked.map(l => l.id))
+    const kids = picked.filter(l => {
+      let p = l.parentId
+      while (p) {
+        if (pickedIds.has(p)) return false
+        const par = this.layers.find(x => x.id === p)
+        p = par ? par.parentId : null
+      }
+      return true
+    })
+    const sharedParent = kids.every(k => k.parentId === kids[0].parentId) ? (kids[0].parentId || null) : null
     const g = {
       id: uid(),
       name: 'Group',
@@ -369,7 +380,7 @@ export class Document {
       clip: false,
       fx: defaultFx(),
       kind: 'group',
-      parentId: kids[0].parentId || null,
+      parentId: sharedParent,
       collapsed: false,
       x: 0,
       y: 0

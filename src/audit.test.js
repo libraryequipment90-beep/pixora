@@ -592,5 +592,23 @@ function paint(layer, color, x = 0, y = 0, w = null, h = null) {
   ok('groupSelected keeps B outside group', b.parentId === null, `b.parent=${b.parentId}`)
 }
 
+// 15. grouping a group together with a layer nests both
+{
+  const doc = new Document(30, 30, null)
+  const a = doc.addLayer('A')
+  const b = doc.addLayer('B')
+  const c = doc.addLayer('C')
+  doc.selectLayer(doc.layers.indexOf(b), false)
+  const g = doc.groupSelected()
+  doc.selected = new Set([g.id, c.id])
+  doc.active = doc.layers.indexOf(c)
+  const ng = doc.groupSelected()
+  const gIn = doc.layers.find(l => l.id === g.id).parentId === ng.id
+  const cIn = doc.layers.find(l => l.id === c.id).parentId === ng.id
+  ok('mixed selection groups group + layer', gIn && cIn, `g=${gIn} c=${cIn}`)
+  ok('mixed grouping keeps nested child', doc.layers.find(l => l.id === b.id).parentId === g.id, 'B stays in g')
+  ok('mixed grouping does not duplicate descendants', doc.layers.filter(l => l.parentId === ng.id).length === 2, `kids=${doc.layers.filter(l => l.parentId === ng.id).length}`)
+}
+
 console.log(`\n${failures.length ? failures.length + ' failing' : 'all audit checks passed'}`)
 if (failures.length) process.exitCode = 1

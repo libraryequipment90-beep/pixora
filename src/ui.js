@@ -560,6 +560,17 @@ function layerTypeIcon(layer) {
 export function renderLayers(app) {
   const list = document.getElementById('layer-list')
   list.innerHTML = ''
+  const depthOf = (layer) => {
+    let depth = 0
+    let pid = layer.parentId
+    while (pid) {
+      const parent = app.doc.layers.find(l => l.id === pid)
+      if (!parent) break
+      depth += 1
+      pid = parent.parentId
+    }
+    return depth
+  }
   app.doc.layers.forEach((layer, i) => {
     if (layer.parentId) {
       let pid = layer.parentId
@@ -570,9 +581,11 @@ export function renderLayers(app) {
         pid = parent.parentId
       }
     }
+    const depth = depthOf(layer)
     const selected = app.doc.selected?.has(layer.id)
     const li = document.createElement('li')
     li.className = 'layer-item' + (i === app.doc.active ? ' active' : '') + (selected && i !== app.doc.active ? ' selected' : '') + (layer.visible ? '' : ' hidden') + (layer.clip ? ' clipped' : '') + (layer.kind === 'group' ? ' group' : '') + (layer.parentId ? ' nested' : '')
+    if (depth) li.style.paddingLeft = `${6 + depth * 14}px`
     li.draggable = true
     const thumb = document.createElement('canvas')
     thumb.width = 36

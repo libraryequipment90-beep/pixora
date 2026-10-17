@@ -494,7 +494,6 @@ select {
 .layer-item.selected { outline: 1px solid rgba(13,153,255,.45); background: #1a3048; }
 .layer-item.hidden { opacity: 0.45; }
 .layer-item.dragging { opacity: 0.4; }
-.layer-item.nested { padding-left: 18px; }
 .layer-item.group { background: #333; }
 .layer-item.drop-into { outline: 1px dashed #c9a227; background: #3b3524; }
 .layer-item .fold { color: var(--text-dim); text-align: center; font-size: 10px; }
