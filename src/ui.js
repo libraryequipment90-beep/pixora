@@ -548,13 +548,8 @@ function showLayerMenu(app, i, x, y) {
 }
 
 function layerTypeIcon(layer) {
-  if (layer.kind === 'group') {
-    return '<span class="type-icon group-icon" title="Group"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M1.6 4.3a1.2 1.2 0 0 1 1.2-1.2h3.1l1.3 1.5h6a1.2 1.2 0 0 1 1.2 1.2v5.6a1.2 1.2 0 0 1-1.2 1.2H2.8a1.2 1.2 0 0 1-1.2-1.2z" fill="currentColor"/></svg></span>'
-  }
-  if (layer.kind === 'text') {
-    return '<span class="type-icon text-icon" title="Text layer"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M3 3.4h10M8 3.4v9.2M6 12.6h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>'
-  }
-  return '<span class="type-icon layer-icon" title="Layer"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M8 1.9 13.8 5 8 8.1 2.2 5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M2.6 7.5 8 10.3l5.4-2.8M2.6 9.9 8 12.7l5.4-2.8" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round" opacity="0.7"/></svg></span>'
+  if (layer.kind !== 'group') return ''
+  return '<span class="type-icon" title="Group"><svg class="folder-icon" viewBox="0 0 15 11" width="15" height="11" aria-hidden="true"><path d="M0 0h8v2h7v9H0z" fill="currentColor"/></svg></span>'
 }
 
 export function renderLayers(app) {
@@ -590,36 +585,36 @@ export function renderLayers(app) {
     const thumb = document.createElement('canvas')
     thumb.width = 36
     thumb.height = 24
-    const tctx = thumb.getContext('2d')
-    tctx.fillStyle = '#222'
-    tctx.fillRect(0, 0, 36, 24)
-    if (layer.kind !== 'group') tctx.drawImage(layer.canvas, 0, 0, 36, 24)
-    else {
-      tctx.fillStyle = '#3a3a3a'
-      tctx.fillRect(4, 6, 28, 14)
-      tctx.strokeStyle = '#888'
-      tctx.strokeRect(4.5, 6.5, 27, 13)
+    if (layer.kind !== 'group') {
+      const tctx = thumb.getContext('2d')
+      tctx.fillStyle = '#222'
+      tctx.fillRect(0, 0, 36, 24)
+      tctx.drawImage(layer.canvas, 0, 0, 36, 24)
     }
     const toggle = layer.kind === 'group'
-      ? `<span class="fold" title="Collapse">${layer.collapsed ? '▸' : '▾'}</span>`
+      ? `<span class="fold${layer.collapsed ? ' collapsed' : ''}" title="${layer.collapsed ? 'Expand' : 'Collapse'}"></span>`
       : '<span class="fold"></span>'
-    li.innerHTML = `${toggle}<span class="eye" title="Visibility">${layer.visible ? '◉' : '○'}</span>${layerTypeIcon(layer)}`
+    li.innerHTML = `<span class="eye" title="Visibility">${layer.visible ? '◉' : '○'}</span>${toggle}`
     const thumbs = document.createElement('div')
     thumbs.className = 'layer-thumbs'
-    thumbs.appendChild(thumb)
-    if (layer.mask) {
-      const mt = document.createElement('canvas')
-      mt.className = 'mask-thumb' + (layer.maskEnabled === false ? ' off' : '')
-      mt.width = 36
-      mt.height = 24
-      mt.title = layer.maskEnabled === false ? 'Mask disabled' : 'Layer mask'
-      mt.getContext('2d').drawImage(layer.mask, 0, 0, 36, 24)
-      mt.addEventListener('click', (e) => {
-        e.stopPropagation()
-        layer.maskEnabled = layer.maskEnabled === false
-        app.render()
-      })
-      thumbs.appendChild(mt)
+    if (layer.kind === 'group') {
+      thumbs.innerHTML = layerTypeIcon(layer)
+    } else {
+      thumbs.appendChild(thumb)
+      if (layer.mask) {
+        const mt = document.createElement('canvas')
+        mt.className = 'mask-thumb' + (layer.maskEnabled === false ? ' off' : '')
+        mt.width = 36
+        mt.height = 24
+        mt.title = layer.maskEnabled === false ? 'Mask disabled' : 'Layer mask'
+        mt.getContext('2d').drawImage(layer.mask, 0, 0, 36, 24)
+        mt.addEventListener('click', (e) => {
+          e.stopPropagation()
+          layer.maskEnabled = layer.maskEnabled === false
+          app.render()
+        })
+        thumbs.appendChild(mt)
+      }
     }
     li.appendChild(thumbs)
     const mid = document.createElement('div')
