@@ -2,6 +2,12 @@ import { Document, documentFromImage, documentFromProject, loadImage, createCanv
 import { createToolController, toolById } from './tools.js'
 import { FILTERS, applyAdjustments } from './filters.js'
 import {
+  levels, curves, hueSaturation, colorBalance, exposure as exposureAdjust, vibrance as vibranceAdjust,
+  blackWhite, photoFilter, gradientMap, desaturate, equalize, autoTone, autoColor,
+  gaussianBlur, motionBlurAngle, radialBlur, median, reduceNoise, highPass,
+  minimum as minimumFilter, maximum as maximumFilter, offsetFilter, clouds, sharpenAmount
+} from './filters.js'
+import {
   buildMenus, buildToolbar, renderOptions, renderLayers, renderHistory,
   syncLayerControls, syncToolbar, modal, toast, ADJUST_DEFS, hsvToRgb, rgbToHex, hexToHsv, NEW_PRESETS
 } from './ui.js'
@@ -11,6 +17,190 @@ const overlay = document.getElementById('overlay')
 const wrap = document.getElementById('canvas-wrap')
 const fileOpen = document.getElementById('file-open')
 const filePlace = document.getElementById('file-place')
+
+const EFFECT_SPECS = {
+  levels: {
+    title: 'Levels',
+    controls: [
+      { id: 'inBlack', label: 'Input Black', min: 0, max: 254, def: 0 },
+      { id: 'inWhite', label: 'Input White', min: 1, max: 255, def: 255 },
+      { id: 'gamma', label: 'Gamma', min: 10, max: 300, def: 100 },
+      { id: 'outBlack', label: 'Output Black', min: 0, max: 255, def: 0 },
+      { id: 'outWhite', label: 'Output White', min: 0, max: 255, def: 255 }
+    ],
+    apply(c, v) {
+      levels(c, { inBlack: v.inBlack, inWhite: v.inWhite, gamma: v.gamma / 100, outBlack: v.outBlack, outWhite: v.outWhite })
+    }
+  },
+  curves: {
+    title: 'Curves',
+    controls: [
+      { id: 'shadows', label: 'Shadows', min: -100, max: 100, def: 0 },
+      { id: 'midtones', label: 'Midtones', min: -100, max: 100, def: 0 },
+      { id: 'highlights', label: 'Highlights', min: -100, max: 100, def: 0 }
+    ],
+    apply(c, v) { curves(c, v) }
+  },
+  hueSaturation: {
+    title: 'Hue/Saturation',
+    controls: [
+      { id: 'hue', label: 'Hue', min: -180, max: 180, def: 0 },
+      { id: 'saturation', label: 'Saturation', min: -100, max: 100, def: 0 },
+      { id: 'lightness', label: 'Lightness', min: -100, max: 100, def: 0 }
+    ],
+    apply(c, v) { hueSaturation(c, v) }
+  },
+  colorBalance: {
+    title: 'Color Balance',
+    controls: [
+      { id: 'cyanRed', label: 'Cyan / Red', min: -100, max: 100, def: 0 },
+      { id: 'magentaGreen', label: 'Magenta / Green', min: -100, max: 100, def: 0 },
+      { id: 'yellowBlue', label: 'Yellow / Blue', min: -100, max: 100, def: 0 },
+      { id: 'preserveLuminosity', label: 'Preserve Luminosity', type: 'check', def: true }
+    ],
+    apply(c, v) { colorBalance(c, v) }
+  },
+  exposure: {
+    title: 'Exposure',
+    controls: [
+      { id: 'exposure', label: 'Exposure', min: -100, max: 100, def: 0 },
+      { id: 'offset', label: 'Offset', min: -50, max: 50, def: 0 },
+      { id: 'gamma', label: 'Gamma', min: 10, max: 300, def: 100 }
+    ],
+    apply(c, v) { exposureAdjust(c, { exposure: v.exposure, offset: v.offset, gamma: v.gamma / 100 }) }
+  },
+  vibrance: {
+    title: 'Vibrance',
+    controls: [{ id: 'vibrance', label: 'Vibrance', min: -100, max: 100, def: 0 }],
+    apply(c, v) { vibranceAdjust(c, v) }
+  },
+  blackWhite: {
+    title: 'Black & White',
+    controls: [
+      { id: 'reds', label: 'Reds', min: -100, max: 100, def: 0 },
+      { id: 'yellows', label: 'Yellows', min: -100, max: 100, def: 0 },
+      { id: 'greens', label: 'Greens', min: -100, max: 100, def: 0 },
+      { id: 'cyans', label: 'Cyans', min: -100, max: 100, def: 0 },
+      { id: 'blues', label: 'Blues', min: -100, max: 100, def: 0 },
+      { id: 'magentas', label: 'Magentas', min: -100, max: 100, def: 0 }
+    ],
+    apply(c, v) { blackWhite(c, v) }
+  },
+  photoFilter: {
+    title: 'Photo Filter',
+    controls: [
+      { id: 'color', label: 'Color', type: 'color', def: '#ec8a00' },
+      { id: 'density', label: 'Density', min: 0, max: 100, def: 25 },
+      { id: 'preserveLuminosity', label: 'Preserve Luminosity', type: 'check', def: true }
+    ],
+    apply(c, v) { photoFilter(c, v) }
+  },
+  gradientMap: {
+    title: 'Gradient Map',
+    controls: [
+      { id: 'from', label: 'Shadow Color', type: 'color', def: '#000000' },
+      { id: 'to', label: 'Highlight Color', type: 'color', def: '#ffffff' }
+    ],
+    apply(c, v) { gradientMap(c, v) }
+  },
+  posterize: {
+    title: 'Posterize',
+    controls: [{ id: 'levels', label: 'Levels', min: 2, max: 32, def: 4 }],
+    apply(c, v) { FILTERS.posterize(c, v.levels) }
+  },
+  threshold: {
+    title: 'Threshold',
+    controls: [{ id: 'level', label: 'Level', min: 1, max: 254, def: 128 }],
+    apply(c, v) { FILTERS.threshold(c, v.level) }
+  },
+  desaturate: { title: 'Desaturate', controls: [], apply(c) { desaturate(c) } },
+  equalize: { title: 'Equalize', controls: [], apply(c) { equalize(c) } },
+  autoTone: { title: 'Auto Tone', controls: [], apply(c) { autoTone(c) } },
+  autoColor: { title: 'Auto Color', controls: [], apply(c) { autoColor(c) } },
+  autoContrast: { title: 'Auto Contrast', controls: [], apply(c) { autoTone(c) } },
+  invert: { title: 'Invert', controls: [], apply(c) { FILTERS.invert(c) } },
+  gaussianBlur: {
+    title: 'Gaussian Blur',
+    controls: [{ id: 'radius', label: 'Radius', min: 1, max: 60, def: 4 }],
+    apply(c, v) { gaussianBlur(c, v.radius) }
+  },
+  motionBlur: {
+    title: 'Motion Blur',
+    controls: [
+      { id: 'distance', label: 'Distance', min: 1, max: 100, def: 12 },
+      { id: 'angle', label: 'Angle', min: 0, max: 360, def: 0 }
+    ],
+    apply(c, v) { motionBlurAngle(c, v.distance, v.angle) }
+  },
+  radialBlur: {
+    title: 'Radial Blur (Zoom)',
+    controls: [{ id: 'amount', label: 'Amount', min: 1, max: 100, def: 20 }],
+    apply(c, v) { radialBlur(c, v.amount, 'zoom') }
+  },
+  spinBlur: {
+    title: 'Radial Blur (Spin)',
+    controls: [{ id: 'amount', label: 'Amount', min: 1, max: 100, def: 20 }],
+    apply(c, v) { radialBlur(c, v.amount, 'spin') }
+  },
+  median: {
+    title: 'Median',
+    controls: [{ id: 'radius', label: 'Radius', min: 1, max: 3, def: 2 }],
+    apply(c, v) { median(c, v.radius) }
+  },
+  reduceNoise: {
+    title: 'Reduce Noise',
+    controls: [{ id: 'amount', label: 'Amount', min: 1, max: 10, def: 6 }],
+    apply(c, v) { reduceNoise(c, v.amount) }
+  },
+  highPass: {
+    title: 'High Pass',
+    controls: [{ id: 'radius', label: 'Radius', min: 1, max: 30, def: 6 }],
+    apply(c, v) { highPass(c, v.radius) }
+  },
+  minimum: {
+    title: 'Minimum',
+    controls: [{ id: 'radius', label: 'Radius', min: 1, max: 6, def: 2 }],
+    apply(c, v) { minimumFilter(c, v.radius) }
+  },
+  maximum: {
+    title: 'Maximum',
+    controls: [{ id: 'radius', label: 'Radius', min: 1, max: 6, def: 2 }],
+    apply(c, v) { maximumFilter(c, v.radius) }
+  },
+  offset: {
+    title: 'Offset',
+    controls: [
+      { id: 'x', label: 'Horizontal', min: -500, max: 500, def: 0 },
+      { id: 'y', label: 'Vertical', min: -500, max: 500, def: 0 }
+    ],
+    apply(c, v) { offsetFilter(c, v.x, v.y) }
+  },
+  clouds: {
+    title: 'Clouds',
+    controls: [{ id: 'scale', label: 'Scale', min: 4, max: 200, def: 40 }],
+    apply(c, v) { clouds(c, v.scale) }
+  },
+  addNoise: {
+    title: 'Add Noise',
+    controls: [{ id: 'amount', label: 'Amount', min: 1, max: 150, def: 30 }],
+    apply(c, v) { FILTERS.noise(c, v.amount) }
+  },
+  pixelate: {
+    title: 'Pixelate',
+    controls: [{ id: 'size', label: 'Cell Size', min: 2, max: 64, def: 8 }],
+    apply(c, v) { FILTERS.pixelate(c, v.size) }
+  },
+  sharpenAmount: {
+    title: 'Sharpen',
+    controls: [{ id: 'amount', label: 'Amount', min: 1, max: 300, def: 100 }],
+    apply(c, v) { sharpenAmount(c, v.amount) }
+  },
+  vignette: {
+    title: 'Vignette',
+    controls: [{ id: 'strength', label: 'Strength', min: 1, max: 100, def: 55 }],
+    apply(c, v) { FILTERS.vignette(c, v.strength / 100) }
+  }
+}
 
 const app = {
   doc: new Document(1280, 800, '#ffffff'),
@@ -41,8 +231,8 @@ const app = {
     color: false,
     adjust: false,
     layers: true,
-    history: true,
-    swatches: true,
+    history: false,
+    swatches: false,
     navigator: false,
     info: false,
     brush: false,
@@ -51,7 +241,8 @@ const app = {
     paths: false,
     channels: false,
     actions: false,
-    properties: false
+    properties: false,
+    histogram: false
   },
   guides: [],
   screenMode: 'standard',
@@ -163,6 +354,7 @@ const app = {
     renderLayers(this)
     renderHistory(this)
     syncLayerControls(this)
+    this.drawHistogram()
   },
   renderOverlay() {
     const ctx = overlay.getContext('2d')
@@ -244,6 +436,85 @@ const app = {
     this.doc.pushHistory(id)
     this.render()
   },
+  brightnessContrastDialog() {
+    const layer = this.doc.currentLayer()
+    if (!layer || layer.kind === 'group') { toast('Select a pixel layer'); return }
+    if (layer.locked) { toast('Layer is locked'); return }
+    this.doc.rasterizeText(layer)
+    const base = cloneCanvas(layer.canvas)
+    const body = document.createElement('div')
+    body.className = 'mini-dlg'
+    body.innerHTML = `
+      <div class="form-row"><label>Brightness:</label><input id="bc-b" type="range" min="-100" max="100" value="0"><input id="bc-bn" type="number" min="-100" max="100" value="0" style="width:56px"><span></span></div>
+      <div class="form-row"><label>Contrast:</label><input id="bc-c" type="range" min="-100" max="100" value="0"><input id="bc-cn" type="number" min="-100" max="100" value="0" style="width:56px"><span></span></div>
+      <div class="form-row"><label></label><button type="button" id="bc-reset">Reset</button></div>`
+    const b = body.querySelector('#bc-b')
+    const bn = body.querySelector('#bc-bn')
+    const c = body.querySelector('#bc-c')
+    const cn = body.querySelector('#bc-cn')
+    const clampVal = v => Math.max(-100, Math.min(100, Math.round(+v || 0)))
+    const restore = () => {
+      const ctx = layer.canvas.getContext('2d')
+      ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height)
+      ctx.drawImage(base, 0, 0)
+      this.paint()
+    }
+    const live = () => {
+      const ctx = layer.canvas.getContext('2d')
+      ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height)
+      ctx.drawImage(base, 0, 0)
+      applyAdjustments(layer.canvas, { brightness: +b.value, contrast: +c.value })
+      this.paint()
+    }
+    b.oninput = () => { bn.value = b.value; live() }
+    c.oninput = () => { cn.value = c.value; live() }
+    bn.onchange = () => { b.value = clampVal(bn.value); bn.value = b.value; live() }
+    cn.onchange = () => { c.value = clampVal(cn.value); cn.value = c.value; live() }
+    body.querySelector('#bc-reset').onclick = () => {
+      b.value = 0; c.value = 0; bn.value = 0; cn.value = 0
+      live()
+    }
+    const wrapEl = modal({
+      title: 'Brightness/Contrast',
+      body,
+      onOk: () => {
+        if (+b.value || +c.value) this.doc.pushHistory('Brightness/Contrast')
+        else restore()
+        this.render()
+      }
+    })
+    const cancel = () => { restore(); this.render() }
+    wrapEl.querySelector('.cancel').addEventListener('click', cancel)
+    wrapEl.querySelector('.modal-x').addEventListener('click', cancel)
+    wrapEl.addEventListener('click', e => { if (e.target === wrapEl) cancel() })
+  },
+  autoContrast() {
+    const layer = this.doc.currentLayer()
+    if (!layer || layer.kind === 'group') { toast('Select a pixel layer'); return }
+    if (layer.locked) { toast('Layer is locked'); return }
+    this.doc.rasterizeText(layer)
+    const ctx = layer.canvas.getContext('2d')
+    const img = ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height)
+    const d = img.data
+    let lo = 255
+    let hi = 0
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] === 0) continue
+      const l = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
+      if (l < lo) lo = l
+      if (l > hi) hi = l
+    }
+    if (hi <= lo) { toast('Nothing to adjust'); return }
+    const scale = 255 / (hi - lo)
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = Math.max(0, Math.min(255, (d[i] - lo) * scale))
+      d[i + 1] = Math.max(0, Math.min(255, (d[i + 1] - lo) * scale))
+      d[i + 2] = Math.max(0, Math.min(255, (d[i + 2] - lo) * scale))
+    }
+    ctx.putImageData(img, 0, 0)
+    this.doc.pushHistory('Auto Contrast')
+    this.render()
+  },
   resetAdjustSliders() {
     ADJUST_DEFS.forEach(a => {
       this.adj[a.id] = a.id === 'gamma' ? 100 : 0
@@ -317,8 +588,199 @@ const app = {
     this.doc.flip(h)
     this.render()
   },
+  effectDialog(id) {
+    const spec = EFFECT_SPECS[id]
+    if (!spec) return
+    const layer = this.doc.currentLayer()
+    if (!layer || layer.kind === 'group') { toast('Select a pixel layer'); return }
+    if (layer.locked) { toast('Layer is locked'); return }
+    this.doc.rasterizeText(layer)
+    if (!spec.controls.length) {
+      spec.apply(layer.canvas, {})
+      this.doc.pushHistory(spec.title)
+      this.render()
+      return
+    }
+    const base = cloneCanvas(layer.canvas)
+    const vals = {}
+    const body = document.createElement('div')
+    body.className = 'mini-dlg'
+    const rows = spec.controls.map(c => {
+      if (c.type === 'color') {
+        vals[c.id] = c.def
+        return `<div class="form-row"><label>${c.label}</label><input type="color" data-id="${c.id}" value="${c.def}"></div>`
+      }
+      if (c.type === 'check') {
+        vals[c.id] = !!c.def
+        return `<div class="form-row"><label></label><label><input type="checkbox" data-id="${c.id}"${c.def ? ' checked' : ''}> ${c.label}</label></div>`
+      }
+      vals[c.id] = c.def
+      return `<div class="form-row"><label>${c.label}</label><input type="range" data-id="${c.id}" min="${c.min}" max="${c.max}" step="${c.step || 1}" value="${c.def}"><span class="ev">${c.def}</span></div>`
+    }).join('')
+    body.innerHTML = rows + '<div class="form-row"><label></label><button type="button" class="eff-reset">Reset</button></div>'
+    const restore = () => {
+      const ctx = layer.canvas.getContext('2d')
+      ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height)
+      ctx.drawImage(base, 0, 0)
+      this.paint()
+    }
+    const live = () => {
+      const ctx = layer.canvas.getContext('2d')
+      ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height)
+      ctx.drawImage(base, 0, 0)
+      spec.apply(layer.canvas, vals)
+      this.paint()
+      this.drawHistogram()
+    }
+    body.querySelectorAll('[data-id]').forEach(input => {
+      const id = input.dataset.id
+      const sync = () => {
+        if (input.type === 'checkbox') vals[id] = input.checked
+        else if (input.type === 'color') vals[id] = input.value
+        else {
+          vals[id] = +input.value
+          const span = input.parentElement.querySelector('.ev')
+          if (span) span.textContent = input.value
+        }
+        live()
+      }
+      input.addEventListener(input.type === 'range' ? 'input' : 'change', sync)
+    })
+    body.querySelector('.eff-reset')?.addEventListener('click', () => {
+      spec.controls.forEach(c => {
+        const input = body.querySelector(`[data-id="${c.id}"]`)
+        if (!input) return
+        if (input.type === 'checkbox') { input.checked = !!c.def; vals[c.id] = !!c.def }
+        else if (input.type === 'color') { input.value = c.def; vals[c.id] = c.def }
+        else {
+          input.value = c.def
+          vals[c.id] = c.def
+          const span = input.parentElement.querySelector('.ev')
+          if (span) span.textContent = c.def
+        }
+      })
+      live()
+    })
+    const wrapEl = modal({
+      title: spec.title,
+      body,
+      okLabel: 'OK',
+      onOk: () => {
+        this.doc.pushHistory(spec.title)
+        this.render()
+      }
+    })
+    const cancel = () => { restore(); this.render() }
+    wrapEl.querySelector('.cancel').addEventListener('click', cancel)
+    wrapEl.querySelector('.modal-x').addEventListener('click', cancel)
+    wrapEl.addEventListener('click', e => { if (e.target === wrapEl) cancel() })
+    live()
+  },
+  transformLayer(kind) {
+    const layer = this.doc.currentLayer()
+    if (!layer || layer.kind === 'group') { toast('Select a pixel layer'); return }
+    if (layer.locked || layer.lockPos) { toast('Layer is locked'); return }
+    if (kind === 'flipH') this.doc.flipLayer(layer, true)
+    else if (kind === 'flipV') this.doc.flipLayer(layer, false)
+    else this.doc.rotateLayer(layer, kind)
+    this.render()
+  },
+  modifySelection(kind) {
+    const s = this.doc.selection
+    if (!s) { toast('Make a selection first'); return }
+    const body = document.createElement('div')
+    body.innerHTML = `<div class="row"><label>${kind === 'border' ? 'Width' : 'Amount'}</label><input id="ms-a" type="number" min="1" max="200" value="10"> px</div>`
+    modal({
+      title: `Select ${kind[0].toUpperCase()}${kind.slice(1)}`,
+      body,
+      onOk: () => {
+        const amount = Math.max(1, Math.round(+body.querySelector('#ms-a').value || 1))
+        if (kind === 'expand') {
+          this.doc.selection = { ...s, x: s.x - amount, y: s.y - amount, w: s.w + amount * 2, h: s.h + amount * 2 }
+        } else if (kind === 'contract') {
+          const w = Math.max(1, s.w - amount * 2)
+          const h = Math.max(1, s.h - amount * 2)
+          this.doc.selection = { ...s, x: s.x + amount, y: s.y + amount, w, h }
+        } else if (kind === 'border') {
+          const outer = { x: s.x - amount, y: s.y - amount, w: s.w + amount * 2, h: s.h + amount * 2 }
+          const inner = { x: s.x + amount, y: s.y + amount, w: Math.max(1, s.w - amount * 2), h: Math.max(1, s.h - amount * 2) }
+          const path = [
+            { x: outer.x, y: outer.y }, { x: outer.x + outer.w, y: outer.y },
+            { x: outer.x + outer.w, y: outer.y + outer.h }, { x: outer.x, y: outer.y + outer.h },
+            { x: inner.x, y: inner.y }, { x: inner.x, y: inner.y + inner.h },
+            { x: inner.x + inner.w, y: inner.y + inner.h }, { x: inner.x + inner.w, y: inner.y }
+          ]
+          this.doc.selection = { ...outer, path }
+        }
+        this.render()
+        this.renderOverlay()
+      }
+    })
+  },
+  growSelection(by = 1) {
+    const s = this.doc.selection
+    if (!s) { toast('Make a selection first'); return }
+    this.doc.selection = { ...s, x: s.x - by, y: s.y - by, w: s.w + by * 2, h: s.h + by * 2 }
+    this.renderOverlay()
+  },
+  trimImage() {
+    if (this.doc.trim()) this.layoutCanvas()
+    else toast('Nothing to trim')
+  },
+  revealAll() {
+    this.doc.revealAll()
+    this.layoutCanvas()
+  },
+  setMode(mode) {
+    this.doc.setMode(mode)
+    this.render()
+    toast(`Mode: ${mode}`)
+  },
+  exportSvg() {
+    const canvas = createCanvas(this.doc.width, this.doc.height)
+    this.doc.compositeTo(canvas.getContext('2d'))
+    const data = canvas.toDataURL('image/png')
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${this.doc.width}" height="${this.doc.height}" viewBox="0 0 ${this.doc.width} ${this.doc.height}"><image href="${data}" width="${this.doc.width}" height="${this.doc.height}"/></svg>`
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }))
+    a.download = `${this.doc.name}.svg`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  },
+  async openAsLayers() {
+    filePlace.multiple = true
+    filePlace.dataset.mode = 'layers'
+    filePlace.click()
+  },
+  drawHistogram() {
+    const el = document.getElementById('histogram-canvas')
+    if (!el || this.panels.histogram === false) return
+    const w = el.width, h = el.height
+    const ctx = el.getContext('2d')
+    ctx.fillStyle = '#1c1c1c'
+    ctx.fillRect(0, 0, w, h)
+    const probe = createCanvas(this.doc.width, this.doc.height)
+    this.doc.compositeTo(probe.getContext('2d'))
+    const d = probe.getContext('2d').getImageData(0, 0, probe.width, probe.height).data
+    const bins = new Array(64).fill(0)
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] === 0) continue
+      const l = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
+      bins[Math.min(63, l / 4 | 0)]++
+    }
+    const max = Math.max(1, ...bins)
+    ctx.fillStyle = '#8ab4f8'
+    bins.forEach((v, i) => {
+      const bh = Math.round((v / max) * (h - 6))
+      ctx.fillRect(i * (w / 64), h - bh, w / 64 - 1, bh)
+    })
+  },
   async openFile() { fileOpen.click() },
-  async placeFile() { filePlace.click() },
+  async placeFile() {
+    filePlace.multiple = true
+    filePlace.dataset.mode = 'place'
+    filePlace.click()
+  },
   async loadFromFile(file, place) {
     const name = file.name.replace(/\.[^.]+$/, '')
     if (!place && /\.(pixora|json)$/i.test(file.name)) {
@@ -601,8 +1063,8 @@ const app = {
     const body = document.createElement('div')
     body.innerHTML = `<div style="line-height:1.7;color:#ccc">
       V Move · M Marquee · L Lasso · C Crop · I Eyedropper · W Wand<br>
-      B Brush · E Eraser · S Clone · G Gradient/Bucket · J Heal<br>
-      T Type · U Shape · P Pen · H Hand · Z Zoom · R Blur · O Dodge<br>
+      B Brush · E Eraser · S Clone · G Gradient/Bucket · J Heal / Red Eye<br>
+      T Type · U Shape (U cycles rounded / ellipse / triangle) · P Pen · H Hand · Z Zoom · R Blur · O Dodge<br>
       [ ] Brush size · X Swap colors · D Reset colors · Space Hand<br>
       Shift constrain · Alt from center / sample / duplicate<br>
       Enter crop · Esc cancel · 1–0 opacity · Arrows nudge<br>
@@ -901,6 +1363,7 @@ const app = {
     this.panels[id] = !this.panels[id]
     this._panelFocus = this.panels[id] ? id : null
     this.applyPanels()
+    if (id === 'histogram') this.drawHistogram()
     buildMenus(this)
   },
   applyPanels() {
@@ -1040,9 +1503,9 @@ const app = {
       guides: true, grid: false, slices: false, lockGuides: false
     })
     Object.assign(this.panels, {
-      color: false, adjust: false, layers: true, history: true, swatches: true,
+      color: false, adjust: false, layers: true, history: false, swatches: false,
       navigator: false, info: false, brush: false, character: false,
-      paragraph: false, paths: false, channels: false, actions: false, properties: false
+      paragraph: false, paths: false, channels: false, actions: false, properties: false, histogram: false
     })
     this.setScreenMode('standard')
     this.applyPanels()
@@ -1296,7 +1759,7 @@ if (grid) {
 document.getElementById('layer-link')?.addEventListener('click', () => app.toast('Link layers'))
 
 document.getElementById('layer-add').onclick = () => {
-  app.doc.addLayer()
+  app.doc.addBlankLayer()
   app.doc.pushHistory('New Layer')
   app.render()
 }
@@ -1309,9 +1772,13 @@ document.getElementById('layer-del').onclick = () => {
 document.getElementById('layer-mask').onclick = () => { app.doc.addMask(); app.render() }
 document.getElementById('layer-adj').onclick = () => { app.doc.addFillLayer(app.doc.fg); app.render() }
 document.getElementById('layer-group').onclick = () => {
-  app.doc.groupSelected()
+  app.doc.groupAll()
   app.render()
 }
+document.getElementById('layer-ungroup')?.addEventListener('click', () => {
+  app.doc.ungroup()
+  app.render()
+})
 document.getElementById('layer-fx').onclick = () => app.layerStyleDialog()
 document.getElementById('lock-all').onclick = () => {
   const l = app.doc.currentLayer()
@@ -1399,7 +1866,17 @@ document.querySelectorAll('[data-para-align]').forEach(b => {
   }
 })
 fileOpen.onchange = e => { const f = e.target.files[0]; if (f) app.loadFromFile(f, false); e.target.value = '' }
-filePlace.onchange = e => { const f = e.target.files[0]; if (f) app.loadFromFile(f, true); e.target.value = '' }
+filePlace.onchange = async e => {
+  const files = [...e.target.files]
+  const asLayers = e.target.dataset.mode === 'layers'
+  for (const f of files) {
+    await app.loadFromFile(f, true)
+    if (!asLayers) break
+  }
+  e.target.value = ''
+  delete e.target.dataset.mode
+  e.target.multiple = false
+}
 
 wrap.addEventListener('pointerdown', e => {
   if (e.button !== 0) return
@@ -1460,7 +1937,7 @@ window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase()
   if (e.code === 'Space') { e.preventDefault(); app._prevTool = app.tool; app.setTool('hand'); return }
   if (e.ctrlKey || e.metaKey) {
-    if (k === 'n' && e.shiftKey) { e.preventDefault(); app.doc.addLayer(); app.doc.pushHistory('New Layer'); app.render() }
+    if (k === 'n' && e.shiftKey) { e.preventDefault(); app.doc.addBlankLayer(); app.doc.pushHistory('New Layer'); app.render() }
     else if (k === 'n') { e.preventDefault(); app.newDocDialog() }
     else if (k === 'o') { e.preventDefault(); app.openFile() }
     else if (k === 's' && e.shiftKey) { e.preventDefault(); app.exportDialog() }
@@ -1472,9 +1949,9 @@ window.addEventListener('keydown', e => {
     else if (k === 'j') { e.preventDefault(); app.doc.selection ? app.doc.layerViaCopy(false) : app.doc.duplicateLayer() }
     else if (k === 'g' && e.altKey) { e.preventDefault(); app.doc.toggleClip() }
     else if (k === 'g' && e.shiftKey) { e.preventDefault(); app.doc.ungroup(); app.render() }
-    else if (k === 'g') { e.preventDefault(); app.doc.groupSelected(); app.render() }
-    else if (k === 'e' && e.shiftKey) { e.preventDefault(); app.doc.mergeVisible() }
-    else if (k === 'e') { e.preventDefault(); app.doc.mergeDown() }
+    else if (k === 'g') { e.preventDefault(); app.doc.groupAll(); app.render() }
+    else if (k === 'e' && e.shiftKey) { e.preventDefault(); app.doc.mergeVisible(); app.render() }
+    else if (k === 'e') { e.preventDefault(); app.doc.mergeSelected(); app.render() }
     else if (k === '[' && e.shiftKey) { e.preventDefault(); app.doc.sendToBack() }
     else if (k === ']' && e.shiftKey) { e.preventDefault(); app.doc.bringToFront() }
     else if (k === '[') { e.preventDefault(); app.doc.moveLayer(-1) }
@@ -1510,7 +1987,7 @@ window.addEventListener('keydown', e => {
   else if (k === 'c') app.setTool(app.tool === 'crop' ? 'slice' : 'crop')
   else if (k === 'i') app.setTool(app.tool === 'eyedropper' ? 'sampler' : 'eyedropper')
   else if (k === 'w') app.setTool('wand')
-  else if (k === 'j') app.setTool('heal')
+  else if (k === 'j') app.setTool(app.tool === 'heal' ? 'red-eye' : 'heal')
   else if (k === 'y') app.setTool('history-brush')
   else if (k === 'b') app.setTool(app.tool === 'brush' ? 'pencil' : 'brush')
   else if (k === 'e') app.setTool(app.tool === 'eraser' ? 'magic-eraser' : 'eraser')
@@ -1518,7 +1995,7 @@ window.addEventListener('keydown', e => {
   else if (k === 'g') app.setTool(app.tool === 'gradient' ? 'fill' : 'gradient')
   else if (k === 't') app.setTool('text')
   else if (k === 'u') {
-    const order = ['shape', 'ellipse', 'line', 'poly']
+    const order = ['shape', 'round-rect', 'ellipse', 'triangle', 'line', 'poly']
     const i = order.indexOf(app.tool)
     app.setTool(order[(i + 1) % order.length])
   }

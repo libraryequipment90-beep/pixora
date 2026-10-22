@@ -55,14 +55,14 @@
         <button type="button" data-rail="properties" title="Properties">▢</button>
       </aside>
       <aside class="panels" id="panels">
-        <div class="panel-stack" data-stack="top">
+        <div class="panel-stack" data-stack="top" hidden>
           <div class="panel-tabs">
-            <button type="button" class="on" data-tab="history">History</button>
-            <button type="button" data-tab="swatches">Swatches</button>
+            <button type="button" data-tab="history" hidden>History</button>
+            <button type="button" data-tab="swatches" hidden>Swatches</button>
             <span class="tab-spacer"></span>
             <button type="button" class="tab-menu" title="Panel options">☰</button>
           </div>
-          <section class="panel history-panel tab-body on" data-panel="history" data-tab-body="history">
+          <section class="panel history-panel tab-body" data-panel="history" data-tab-body="history" hidden>
             <ul class="history-list" id="history-list"></ul>
           </section>
           <section class="panel tab-body" data-panel="swatches" data-tab-body="swatches" hidden>
@@ -115,6 +115,10 @@
             <span>Blend</span><b id="prop-blend">Normal</b>
             <span>Lock</span><b id="prop-lock">—</b>
           </div>
+        </section>
+        <section class="panel extra-panel" data-panel="histogram" hidden>
+          <h3>Histogram</h3>
+          <canvas id="histogram-canvas" width="236" height="96"></canvas>
         </section>
         <section class="panel extra-panel" data-panel="color" hidden>
           <h3>Color</h3>
@@ -172,7 +176,8 @@
               <button type="button" id="layer-fx" title="Layer Style">fx</button>
               <button type="button" id="layer-mask" title="Add Layer Mask">[]</button>
               <button type="button" id="layer-adj" title="New Fill Layer">◐</button>
-              <button type="button" id="layer-group" title="New Group">▣</button>
+              <button type="button" id="layer-group" title="Group Layers">▣</button>
+              <button type="button" id="layer-ungroup" title="Ungroup Layers">▢</button>
               <button type="button" id="layer-add" title="New Layer">+</button>
               <button type="button" id="layer-dup" title="Duplicate Layer">⧉</button>
               <button type="button" id="layer-merge" title="Merge Layers">⇩</button>

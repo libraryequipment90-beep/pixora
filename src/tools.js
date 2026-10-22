@@ -37,7 +37,10 @@ export const TOOL_GROUPS = [
   },
   {
     id: 'heal',
-    tools: [{ id: 'heal', label: 'Spot Healing Brush', key: 'J', icon: 'heal' }]
+    tools: [
+      { id: 'heal', label: 'Spot Healing Brush', key: 'J', icon: 'heal' },
+      { id: 'red-eye', label: 'Red Eye', key: 'J', icon: 'redEye' }
+    ]
   },
   {
     id: 'brush',
@@ -99,7 +102,9 @@ export const TOOL_GROUPS = [
     id: 'shape',
     tools: [
       { id: 'shape', label: 'Rectangle', key: 'U', icon: 'rect' },
+      { id: 'round-rect', label: 'Rounded Rectangle', key: 'U', icon: 'roundRect' },
       { id: 'ellipse', label: 'Ellipse', key: 'U', icon: 'ellipse' },
+      { id: 'triangle', label: 'Triangle', key: 'U', icon: 'triangle' },
       { id: 'line', label: 'Line', key: 'U', icon: 'line' },
       { id: 'poly', label: 'Polygon', key: 'U', icon: 'poly' }
     ]
@@ -138,6 +143,7 @@ export const ICONS = {
   eyedropper: '<svg viewBox="0 0 24 24"><path d="M19.6 4.4a2.8 2.8 0 0 0-4 0l-1.5 1.5 1.8 1.8 1.5-1.5a.8.8 0 1 1 1.1 1.1l-8.9 8.9H6.3v-3.3l8.9-8.9 1.1 1.1-1.5 1.5 1.8 1.8 1.5-1.5a2.8 2.8 0 0 0 0-4z"/></svg>',
   sampler: '<svg viewBox="0 0 24 24"><path d="M18.8 4.2a2.2 2.2 0 0 0-3.1 0L14.4 5.5l2.1 2.1 1.3-1.3a.7.7 0 1 1 1 1L10 16.1H6v-4L14.8 3.3l1 1-1.3 1.3 2.1 2.1 1.3-1.3a2.2 2.2 0 0 0 0-3.1z"/><circle cx="7.2" cy="18.4" r="2.2"/></svg>',
   wand: '<svg viewBox="0 0 24 24"><path d="M7.5 15.5 15 8l1.4 1.4-7.5 7.5H6.2v-1.4zm10.2-12 .7 1.6 1.6.7-1.6.7-.7 1.6-.7-1.6-1.6-.7 1.6-.7.7-1.6zM4 5l.5 1.2L5.7 7 4.5 7.5 4 8.7l-.5-1.2L2.3 7l1.2-.8L4 5zm14 10 .5 1.2 1.2.8-1.2.5-.5 1.2-.5-1.2-1.2-.5 1.2-.8.5-1.2z"/></svg>',
+  redEye: '<svg viewBox="0 0 24 24"><path d="M12 5c5 0 9 4.5 9 7s-4 7-9 7-9-4.5-9-7 4-7 9-7zm0 2c-4.1 0-6.9 3.3-6.9 5S7.9 17 12 17s6.9-3.3 6.9-5S16.1 7 12 7zm0 1.6a3.4 3.4 0 1 1 0 6.8 3.4 3.4 0 0 1 0-6.8z" fill="#e24b4b"/></svg>',
   heal: '<svg viewBox="0 0 24 24"><path d="M13.5 3.2 20.8 10.5 11 20.3H3.7v-7.3L13.5 3.2zm1.4 2.8L6.2 14.7v3.1h3.1l8.7-8.7-2.1-2.1zM8 4l.6 1.5L10 6.2 8.6 6.8 8 8.3l-.6-1.5L6 6.2l1.4-.7L8 4z"/></svg>',
   brush: '<svg viewBox="0 0 24 24"><path d="M6.8 16.3c-1.8 1.8-3.3 4.2-3.3 4.2s2.4-1.5 4.2-3.3a2.2 2.2 0 1 0-1-1zM18.9 3.2a2.1 2.1 0 0 0-3 0L8.2 11l4.8 4.8 7.7-7.7a2.1 2.1 0 0 0 0-3l-1.8-1.9z"/></svg>',
   pencil: '<svg viewBox="0 0 24 24"><path d="M4 17.2 14.8 6.4l2.8 2.8L6.8 20H4v-2.8zM16.2 5l1.6-1.6a1.2 1.2 0 0 1 1.7 0l1.1 1.1a1.2 1.2 0 0 1 0 1.7L18.9 7.8 16.2 5z"/></svg>',
@@ -157,6 +163,8 @@ export const ICONS = {
   path: '<svg viewBox="0 0 24 24"><path d="M13 4h7v7h-2V7.4l-7.3 7.3 1.6 1.6L20 9.4V20h-7v-2h5V9.4l-6.2 6.2-4.1-4.1L13 6.2V11h2V4h-2zM4 4h7v2H6v12h5v2H4V4z"/></svg>',
   rect: '<svg viewBox="0 0 24 24"><path d="M4 6h16v12H4V6zm2 2v8h12V8H6z"/></svg>',
   ellipse: '<svg viewBox="0 0 24 24"><path d="M12 5c5 0 9 3.1 9 7s-4 7-9 7-9-3.1-9-7 4-7 9-7zm0 2c-3.8 0-7 2.2-7 5s3.2 5 7 5 7-2.2 7-5-3.2-5-7-5z"/></svg>',
+  roundRect: '<svg viewBox="0 0 24 24"><path d="M7 4h10a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3zm0 2a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1H7z"/></svg>',
+  triangle: '<svg viewBox="0 0 24 24"><path d="M12 4 21 20H3L12 4zm0 3.7L5.9 18h12.2L12 7.7z"/></svg>',
   line: '<svg viewBox="0 0 24 24"><path d="M19.2 4.1 20 4.9 5.1 19.8l-.8-.8L19.2 4.1z"/></svg>',
   poly: '<svg viewBox="0 0 24 24"><path d="M12 3.2 20 9l-3.1 9.6H7.1L4 9 12 3.2zm0 2.6L6.6 9.6 8.8 16.4h6.4l2.2-6.8L12 5.8z"/></svg>',
   shape: '<svg viewBox="0 0 24 24"><path d="M4 6h16v12H4V6zm2 2v8h12V8H6z"/></svg>',
@@ -593,6 +601,8 @@ export function createToolController(app) {
     if (t === 'ellipse') return 'ellipse'
     if (t === 'line') return 'line'
     if (t === 'poly') return 'poly'
+    if (t === 'round-rect') return 'round-rect'
+    if (t === 'triangle') return 'triangle'
     return state.shape
   }
 
@@ -613,10 +623,20 @@ export function createToolController(app) {
     const kind = currentShapeKind()
     ctx.beginPath()
     if (kind === 'rect') ctx.rect(x, y, w, h)
+    else if (kind === 'round-rect') {
+      const r = Math.min(w, h) * 0.18
+      if (ctx.roundRect) ctx.roundRect(x, y, w, h, r)
+      else ctx.rect(x, y, w, h)
+    }
     else if (kind === 'ellipse') ctx.ellipse(x + w / 2, y + h / 2, Math.max(0.5, w / 2), Math.max(0.5, h / 2), 0, 0, Math.PI * 2)
     else if (kind === 'line') {
       ctx.moveTo(a.x, a.y)
       ctx.lineTo(b.x, b.y)
+    } else if (kind === 'triangle') {
+      ctx.moveTo(x + w / 2, y)
+      ctx.lineTo(x + w, y + h)
+      ctx.lineTo(x, y + h)
+      ctx.closePath()
     } else if (kind === 'poly') {
       const n = 5
       const cx = x + w / 2, cy = y + h / 2, rx = w / 2, ry = h / 2
@@ -682,6 +702,12 @@ export function createToolController(app) {
           d[i] = clamp(d[i] - 10)
           d[i + 1] = clamp(d[i + 1] - 10)
           d[i + 2] = clamp(d[i + 2] - 10)
+        } else if (mode === 'red-eye') {
+          const maxc = Math.max(d[i], d[i + 1], d[i + 2])
+          if (d[i] > d[i + 1] * 1.25 && d[i] > d[i + 2] * 1.25 && maxc > 40) {
+            const avg = (d[i + 1] + d[i + 2]) / 2
+            d[i] = avg
+          }
         } else if (mode === 'blur' || mode === 'heal' || mode === 'sharpen') {
           let r = 0, g = 0, b = 0, n = 0
           for (let oy = -1; oy <= 1; oy++) {
@@ -762,8 +788,8 @@ export function createToolController(app) {
   }
 
   const paintTools = ['brush', 'pencil', 'eraser', 'history-brush']
-  const toneTools = ['blur', 'sharpen', 'dodge', 'burn', 'heal']
-  const shapeTools = ['shape', 'ellipse', 'line', 'poly']
+  const toneTools = ['blur', 'sharpen', 'dodge', 'burn', 'heal', 'red-eye']
+  const shapeTools = ['shape', 'round-rect', 'ellipse', 'triangle', 'line', 'poly']
   const selectTools = ['marquee', 'ellipse-marquee', 'lasso', 'poly-lasso', 'magnetic-lasso', 'crop', 'slice']
 
   return {
@@ -1147,7 +1173,7 @@ export function createToolController(app) {
       const hist = {
         brush: 'Brush', pencil: 'Pencil', eraser: 'Eraser', pen: 'Pen',
         clone: 'Clone Stamp', blur: 'Blur', sharpen: 'Sharpen', dodge: 'Dodge',
-        burn: 'Burn', heal: 'Spot Healing', smudge: 'Smudge', move: 'Move', path: 'Move',
+        burn: 'Burn', heal: 'Spot Healing', 'red-eye': 'Red Eye', smudge: 'Smudge', move: 'Move', path: 'Move',
         'history-brush': 'History Brush'
       }
       if (hist[tool]) app.doc.pushHistory(hist[tool])

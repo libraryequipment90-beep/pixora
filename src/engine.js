@@ -207,6 +207,7 @@ export class Document {
     this.listeners = new Set()
     this.fg = '#000000'
     this.bg = '#ffffff'
+    this.mode = 'RGB'
     this.dirty = true
     const bgLayer = this.addLayer('Background', bg)
     if (bg) bgLayer.lockPos = true
@@ -252,17 +253,29 @@ export class Document {
     if (cur?.kind === 'group') {
       layer.parentId = cur.id
       insertAt = this.layers.indexOf(cur)
-      this.layers.forEach((l, i) => { if (l.parentId === cur.id) insertAt = Math.max(insertAt, i) })
-      insertAt += 1
     } else if (cur?.parentId) {
       layer.parentId = cur.parentId
+      const groupIdx = this.layers.findIndex(l => l.id === cur.parentId)
       insertAt = this.layers.indexOf(cur) + 1
+      if (groupIdx >= 0 && insertAt > groupIdx) insertAt = groupIdx
     }
     this.layers.splice(insertAt, 0, layer)
     this.active = this.layers.indexOf(layer)
     this.selected = new Set([layer.id])
     this.emit()
     return layer
+  }
+
+  addFixedLayer(name) {
+    const layer = this.addLayer(name)
+    layer.lockPos = true
+    layer.locked = true
+    layer.lockTrans = true
+    return layer
+  }
+
+  addBlankLayer(name) {
+    return this.addLayer(name, '#ffffff')
   }
 
   copyLayerFields(src) {
@@ -337,22 +350,18 @@ export class Document {
     this.emit()
   }
 
+  groupAll() {
+    const roots = this.layers.filter(l => !l.parentId)
+    if (!roots.length) return null
+    this.selected = new Set(roots.map(l => l.id))
+    this.active = this.layers.indexOf(roots[roots.length - 1])
+    return this.groupSelected()
+  }
+
   groupSelected() {
     const idxs = this.selectedIndices()
     const picked = idxs.map(i => this.layers[i]).filter(Boolean)
-    if (!picked.length) {
-      const g = this.addLayer('Group')
-      g.kind = 'group'
-      g.name = 'Group'
-      g.canvas = createCanvas(1, 1)
-      const inner = this.addLayer('Layer 1')
-      inner.parentId = g.id
-      this.selected = new Set([g.id, inner.id])
-      this.active = this.layers.indexOf(inner)
-      this.pushHistory('New Group')
-      this.emit()
-      return g
-    }
+    if (!picked.length) return this.groupAll()
     const pickedIds = new Set(picked.map(l => l.id))
     const kids = picked.filter(l => {
       let p = l.parentId
@@ -385,11 +394,9 @@ export class Document {
       x: 0,
       y: 0
     }
-    const insertAt = Math.min(...kids.map(k => this.layers.indexOf(k)))
     const rest = this.layers.filter(l => !kids.includes(l))
     kids.forEach(k => { k.parentId = g.id })
-    rest.splice(insertAt, 0, g, ...kids)
-    this.layers = rest
+    this.layers = [...rest, ...kids, g]
     this.active = this.layers.indexOf(g)
     this.selected = new Set([g.id])
     this.pushHistory('Group Layers')
@@ -398,13 +405,22 @@ export class Document {
   }
 
   ungroup(i = this.active) {
-    const g = this.layers[i]
-    if (!g || g.kind !== 'group') return
-    this.layers.forEach(l => { if (l.parentId === g.id) l.parentId = g.parentId || null })
+    let g = this.layers[i]
+    if (!g || g.kind !== 'group') {
+      g = this.layers.find(l => l.kind === 'group' && (!g || g.parentId === l.id))
+        || this.layers.find(l => l.kind === 'group')
+      i = this.layers.indexOf(g)
+    }
+    if (!g || g.kind !== 'group' || i < 0) return
+    const kids = this.layers.filter(l => l.parentId === g.id)
+    kids.forEach(l => { l.parentId = g.parentId || null })
     this.layers.splice(i, 1)
-    this.active = Math.min(i, this.layers.length - 1)
-    const cur = this.layers[this.active]
-    this.selected = cur ? new Set([cur.id]) : new Set()
+    this.active = kids.length ? this.layers.indexOf(kids[kids.length - 1]) : Math.min(i, this.layers.length - 1)
+    this.selected = new Set(kids.map(k => k.id))
+    if (!this.selected.size) {
+      const cur = this.layers[this.active]
+      this.selected = cur ? new Set([cur.id]) : new Set()
+    }
     this.pushHistory('Ungroup Layers')
     this.emit()
   }
@@ -1112,6 +1128,106 @@ export class Document {
     this.emit()
   }
 
+  flipLayer(layer = this.currentLayer(), horizontal = true) {
+    if (!layer || layer.kind === 'group' || !layer.canvas) return
+    const mirror = (src) => {
+      const next = createCanvas(src.width, src.height)
+      const ctx = next.getContext('2d')
+      if (horizontal) {
+        ctx.translate(src.width, 0)
+        ctx.scale(-1, 1)
+      } else {
+        ctx.translate(0, src.height)
+        ctx.scale(1, -1)
+      }
+      ctx.drawImage(src, 0, 0)
+      return next
+    }
+    layer.canvas = mirror(layer.canvas)
+    if (layer.mask) layer.mask = mirror(layer.mask)
+    this.pushHistory(horizontal ? 'Flip Layer Horizontal' : 'Flip Layer Vertical')
+    this.emit()
+  }
+
+  rotateLayer(layer = this.currentLayer(), deg = 90) {
+    if (!layer || layer.kind === 'group' || !layer.canvas) return
+    const rad = deg * Math.PI / 180
+    const w = layer.canvas.width
+    const h = layer.canvas.height
+    const cos = Math.abs(Math.cos(rad))
+    const sin = Math.abs(Math.sin(rad))
+    const nw = Math.max(1, Math.round(w * cos + h * sin))
+    const nh = Math.max(1, Math.round(w * sin + h * cos))
+    const cx = layer.x + w / 2
+    const cy = layer.y + h / 2
+    const next = createCanvas(nw, nh)
+    const ctx = next.getContext('2d')
+    ctx.translate(nw / 2, nh / 2)
+    ctx.rotate(rad)
+    ctx.drawImage(layer.canvas, -w / 2, -h / 2)
+    layer.canvas = next
+    layer.x = Math.round(cx - nw / 2)
+    layer.y = Math.round(cy - nh / 2)
+    this.pushHistory('Rotate Layer')
+    this.emit()
+  }
+
+  trim(bg = null) {
+    const composite = createCanvas(this.width, this.height)
+    this.compositeTo(composite.getContext('2d'))
+    const data = composite.getContext('2d').getImageData(0, 0, this.width, this.height).data
+    const corner = bg || (() => {
+      const i = 0
+      return [data[i], data[i + 1], data[i + 2], data[i + 3]]
+    })()
+    const ref = Array.isArray(corner) ? corner : [255, 255, 255, 255]
+    let minX = this.width, minY = this.height, maxX = -1, maxY = -1
+    for (let y = 0; y < this.height; y++) {
+      for (let x = 0; x < this.width; x++) {
+        const i = (y * this.width + x) * 4
+        if (Math.abs(data[i] - ref[0]) < 3 && Math.abs(data[i + 1] - ref[1]) < 3 && Math.abs(data[i + 2] - ref[2]) < 3 && Math.abs(data[i + 3] - ref[3]) < 3) continue
+        if (x < minX) minX = x
+        if (y < minY) minY = y
+        if (x > maxX) maxX = x
+        if (y > maxY) maxY = y
+      }
+    }
+    if (maxX < 0) { this.pushHistory('Trim'); return false }
+    this.cropTo(minX, minY, maxX - minX + 1, maxY - minY + 1)
+    return true
+  }
+
+  revealAll() {
+    let minX = 0, minY = 0, maxX = this.width, maxY = this.height
+    for (const layer of this.layers) {
+      if (layer.kind === 'group' || !layer.canvas) continue
+      minX = Math.min(minX, layer.x)
+      minY = Math.min(minY, layer.y)
+      maxX = Math.max(maxX, layer.x + layer.canvas.width)
+      maxY = Math.max(maxY, layer.y + layer.canvas.height)
+    }
+    if (minX === 0 && minY === 0 && maxX === this.width && maxY === this.height) return
+    this.cropTo(minX, minY, maxX - minX, maxY - minY)
+  }
+
+  setMode(mode = 'RGB') {
+    this.mode = mode
+    if (mode === 'Grayscale') {
+      for (const layer of this.layers) {
+        if (layer.kind === 'group' || !layer.canvas) continue
+        const data = layer.canvas.getContext('2d').getImageData(0, 0, layer.canvas.width, layer.canvas.height)
+        const d = data.data
+        for (let i = 0; i < d.length; i += 4) {
+          const v = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
+          d[i] = d[i + 1] = d[i + 2] = v
+        }
+        layer.canvas.getContext('2d').putImageData(data, 0, 0)
+      }
+    }
+    this.pushHistory(`Mode: ${mode}`)
+    this.emit()
+  }
+
   cropTo(x, y, w, h) {
     x = Math.round(x); y = Math.round(y); w = Math.round(w); h = Math.round(h)
     for (const layer of this.layers) {
@@ -1230,7 +1346,7 @@ export class Document {
     const at = this.layers.indexOf(target)
     if (target.kind === 'group') {
       moved.parentId = target.id
-      this.layers.splice(at + 1, 0, moved)
+      this.layers.splice(at, 0, moved)
     } else {
       moved.parentId = target.parentId || null
       this.layers.splice(at, 0, moved)

@@ -547,7 +547,7 @@ function paint(layer, color, x = 0, y = 0, w = null, h = null) {
   const gIdx = doc.layers.indexOf(g)
   const innerIdx = doc.layers.indexOf(inner)
   const maxChild = Math.max(...doc.layers.map((l, i) => l.parentId === g.id ? i : -1))
-  ok('addLayer appends inside group', innerIdx === maxChild && innerIdx > gIdx, `inner=${innerIdx} g=${gIdx}`)
+  ok('addLayer appends inside group', innerIdx === maxChild && innerIdx < gIdx, `inner=${innerIdx} g=${gIdx}`)
 }
 
 // 12. reparentLayer moves a layer into a group (drag and drop)
@@ -563,7 +563,7 @@ function paint(layer, color, x = 0, y = 0, w = null, h = null) {
   ok('reparentLayer nests into group', loose.parentId === g.id, `parent=${loose.parentId}`)
   const gIdx = doc.layers.indexOf(g)
   const looseIdx = doc.layers.indexOf(loose)
-  ok('reparentLayer inserts right after group', looseIdx === gIdx + 1, `loose=${looseIdx} g=${gIdx}`)
+  ok('reparentLayer inserts right after group', looseIdx === gIdx - 1, `loose=${looseIdx} g=${gIdx}`)
 }
 
 // 13. reparentLayer refuses to move a group into its own descendant

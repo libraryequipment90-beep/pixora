@@ -1,6 +1,5 @@
 import { BLEND_MODES, BLEND_LABELS, fxActive } from './engine.js'
 import { TOOL_GROUPS, ICONS, toolById, groupForTool } from './tools.js'
-import { FILTER_MENU } from './filters.js'
 
 export function hsvToRgb(h, s, v) {
   const f = (n, k = (n + h / 60) % 6) => v - v * s * Math.max(Math.min(k, 4 - k, 1), 0)
@@ -35,7 +34,8 @@ function menuItemEl(item, wrap, light = false) {
   if (item.sub) {
     const row = document.createElement('div')
     row.className = 'menu-sub'
-    row.innerHTML = `<span class="chk"></span><span>${item.label}</span><span class="menu-caret">›</span>`
+    const subChk = item.check != null ? `<span class="chk">${item.on ? '✓' : ''}</span>` : (light ? '<span class="chk"></span>' : '')
+    row.innerHTML = `${subChk}<span>${item.label}</span><span class="menu-caret">›</span>`
     const nested = document.createElement('div')
     nested.className = 'dropdown nested' + (light ? ' light' : '')
     item.sub.forEach(s => nested.appendChild(menuItemEl(s, wrap, light)))
@@ -64,13 +64,15 @@ export function buildMenus(app) {
       items: [
         { label: 'New Project…', kbd: 'Ctrl+N', fn: () => app.newDocDialog() },
         { label: 'Open…', kbd: 'Ctrl+O', fn: () => app.openFile() },
+        { label: 'Open as Layers…', fn: () => app.openAsLayers() },
         { label: 'Place Embedded…', fn: () => app.placeFile() },
         { hr: true },
         { label: 'Save Project', kbd: 'Ctrl+S', fn: () => app.saveProject() },
         { label: 'Export Image…', kbd: 'Ctrl+Shift+S', fn: () => app.exportDialog() },
         { label: 'Export as PNG', fn: () => app.exportImage('png') },
         { label: 'Export as JPEG', fn: () => app.exportImage('jpeg') },
-        { label: 'Export as WEBP', fn: () => app.exportImage('webp') }
+        { label: 'Export as WEBP', fn: () => app.exportImage('webp') },
+        { label: 'Export as SVG', fn: () => app.exportSvg() }
       ]
     },
     {
@@ -89,7 +91,20 @@ export function buildMenus(app) {
         { label: 'Fill with Background', kbd: 'Ctrl+Backspace', fn: () => app.doc.fillSelection(app.doc.bg) },
         { label: 'Clear', kbd: 'Del', fn: () => app.doc.clearSelection() },
         { hr: true },
-        { label: 'Free Transform', kbd: 'Ctrl+T', fn: () => { app.tools.state.showTransform = true; app.setTool('move'); app.renderOverlay() } }
+        { label: 'Free Transform', kbd: 'Ctrl+T', fn: () => { app.tools.state.showTransform = true; app.setTool('move'); app.renderOverlay() } },
+        {
+          label: 'Transform',
+          sub: [
+            { label: 'Rotate 180°', fn: () => app.transformLayer(180) },
+            { label: 'Rotate 90° CW', fn: () => app.transformLayer(90) },
+            { label: 'Rotate 90° CCW', fn: () => app.transformLayer(-90) },
+            { hr: true },
+            { label: 'Flip Horizontal', fn: () => app.transformLayer('flipH') },
+            { label: 'Flip Vertical', fn: () => app.transformLayer('flipV') }
+          ]
+        },
+        { label: 'Define Brush Preset', dim: true, fn: () => {} },
+        { label: 'Define Pattern', dim: true, fn: () => {} }
       ]
     },
     {
@@ -98,6 +113,43 @@ export function buildMenus(app) {
         { label: 'Image Size…', fn: () => app.imageSizeDialog() },
         { label: 'Canvas Size…', fn: () => app.canvasSizeDialog() },
         { label: 'Crop', fn: () => app.cropSelection() },
+        { label: 'Trim…', fn: () => app.trimImage() },
+        { label: 'Reveal All', fn: () => app.revealAll() },
+        {
+          label: 'Mode',
+          sub: [
+            { label: 'RGB Color', fn: () => app.setMode('RGB') },
+            { label: 'Grayscale', fn: () => app.setMode('Grayscale') }
+          ]
+        },
+        { hr: true },
+        {
+          label: 'Adjustments',
+          sub: [
+            { label: 'Brightness/Contrast…', fn: () => app.brightnessContrastDialog() },
+            { label: 'Levels…', fn: () => app.effectDialog('levels') },
+            { label: 'Curves…', fn: () => app.effectDialog('curves') },
+            { label: 'Exposure…', fn: () => app.effectDialog('exposure') },
+            { label: 'Vibrance…', fn: () => app.effectDialog('vibrance') },
+            { label: 'Hue/Saturation…', fn: () => app.effectDialog('hueSaturation') },
+            { label: 'Color Balance…', fn: () => app.effectDialog('colorBalance') },
+            { label: 'Black & White…', fn: () => app.effectDialog('blackWhite') },
+            { label: 'Photo Filter…', fn: () => app.effectDialog('photoFilter') },
+            { label: 'Gradient Map…', fn: () => app.effectDialog('gradientMap') },
+            { hr: true },
+            { label: 'Invert', fn: () => app.effectDialog('invert') },
+            { label: 'Desaturate', fn: () => app.effectDialog('desaturate') },
+            { label: 'Equalize', fn: () => app.effectDialog('equalize') },
+            { label: 'Posterize…', fn: () => app.effectDialog('posterize') },
+            { label: 'Threshold…', fn: () => app.effectDialog('threshold') },
+            { hr: true },
+            { label: 'Auto Tone', fn: () => app.effectDialog('autoTone') },
+            { label: 'Auto Contrast', fn: () => app.effectDialog('autoContrast') },
+            { label: 'Auto Color', fn: () => app.effectDialog('autoColor') },
+            { hr: true },
+            { label: 'Adjustments Panel', fn: () => app.togglePanel('adjust') }
+          ]
+        },
         { hr: true },
         { label: 'Image Rotation 90° CW', fn: () => app.rotate(90) },
         { label: 'Image Rotation 90° CCW', fn: () => app.rotate(-90) },
@@ -109,14 +161,14 @@ export function buildMenus(app) {
     {
       name: 'Layer',
       items: [
-        { label: 'New Layer', kbd: 'Ctrl+Shift+N', fn: () => { app.doc.addLayer(); app.doc.pushHistory('New Layer'); app.render() } },
+        { label: 'New Layer', kbd: 'Ctrl+Shift+N', fn: () => { app.doc.addBlankLayer(); app.doc.pushHistory('New Layer'); app.render() } },
         { label: 'New Fill Layer', fn: () => app.doc.addFillLayer(app.doc.fg) },
         { label: 'Duplicate Layer', kbd: 'Ctrl+J', fn: () => app.doc.duplicateLayer() },
         { label: 'Layer via Copy', kbd: 'Ctrl+Shift+J', fn: () => app.doc.layerViaCopy(false) },
         { label: 'Layer via Cut', kbd: 'Ctrl+Shift+J', fn: () => app.doc.layerViaCopy(true) },
         { label: 'Delete Layer', kbd: 'Del', fn: () => app.doc.deleteLayer() },
         { hr: true },
-        { label: 'Group Layers', kbd: 'Ctrl+G', fn: () => { app.doc.groupSelected(); app.render() } },
+        { label: 'Group Layers', kbd: 'Ctrl+G', fn: () => { app.doc.groupAll(); app.render() } },
         { label: 'Ungroup Layers', kbd: 'Ctrl+Shift+G', fn: () => { app.doc.ungroup(); app.render() } },
         { hr: true },
         { label: 'Add Layer Mask', fn: () => app.doc.addMask() },
@@ -131,7 +183,7 @@ export function buildMenus(app) {
         { label: 'Color Overlay', fn: () => app.layerStyleDialog('overlay') },
         { label: 'Outer Glow', fn: () => app.layerStyleDialog('glow') },
         { hr: true },
-        { label: 'Merge Layers', kbd: 'Ctrl+E', fn: () => app.doc.mergeSelected() },
+        { label: 'Merge Layers', kbd: 'Ctrl+E', fn: () => { app.doc.mergeSelected(); app.render() } },
         { label: 'Merge Down', fn: () => app.doc.mergeDown() },
         { label: 'Merge Visible', kbd: 'Ctrl+Shift+E', fn: () => app.doc.mergeVisible() },
         { label: 'Flatten Image', fn: () => app.doc.flatten() },
@@ -151,12 +203,80 @@ export function buildMenus(app) {
         { label: 'All', kbd: 'Ctrl+A', fn: () => app.selectAll() },
         { label: 'Deselect', kbd: 'Ctrl+D', fn: () => { app.doc.selection = null; app.render(); app.renderOverlay() } },
         { label: 'Inverse', kbd: 'Ctrl+Shift+I', fn: () => app.invertSelection() },
+        {
+          label: 'Modify',
+          sub: [
+            { label: 'Border…', fn: () => app.modifySelection('border') },
+            { label: 'Expand…', fn: () => app.modifySelection('expand') },
+            { label: 'Contract…', fn: () => app.modifySelection('contract') }
+          ]
+        },
+        { label: 'Grow', fn: () => app.growSelection(1) },
+        { label: 'Similar', fn: () => app.growSelection(4) },
         { label: 'Transform Selection', fn: () => { app.tools.state.selXf = true; app.setTool('marquee'); app.renderOverlay() } }
       ]
     },
     {
       name: 'Filter',
-      items: FILTER_MENU.map(f => ({ label: f.label, fn: () => app.applyFilter(f.id) }))
+      items: [
+        {
+          label: 'Blur',
+          sub: [
+            { label: 'Gaussian Blur…', fn: () => app.effectDialog('gaussianBlur') },
+            { label: 'Motion Blur…', fn: () => app.effectDialog('motionBlur') },
+            { label: 'Radial Blur (Zoom)…', fn: () => app.effectDialog('radialBlur') },
+            { label: 'Radial Blur (Spin)…', fn: () => app.effectDialog('spinBlur') },
+            { label: 'Box Blur', fn: () => app.applyFilter('blur') }
+          ]
+        },
+        {
+          label: 'Sharpen',
+          sub: [
+            { label: 'Sharpen', fn: () => app.applyFilter('sharpen') },
+            { label: 'Sharpen More…', fn: () => app.effectDialog('sharpenAmount') },
+            { label: 'High Pass…', fn: () => app.effectDialog('highPass') }
+          ]
+        },
+        {
+          label: 'Noise',
+          sub: [
+            { label: 'Add Noise…', fn: () => app.effectDialog('addNoise') },
+            { label: 'Median…', fn: () => app.effectDialog('median') },
+            { label: 'Reduce Noise…', fn: () => app.effectDialog('reduceNoise') }
+          ]
+        },
+        {
+          label: 'Distort',
+          sub: [
+            { label: 'Offset…', fn: () => app.effectDialog('offset') },
+            { label: 'Pixelate…', fn: () => app.effectDialog('pixelate') }
+          ]
+        },
+        {
+          label: 'Stylize',
+          sub: [
+            { label: 'Emboss', fn: () => app.applyFilter('emboss') },
+            { label: 'Find Edges', fn: () => app.applyFilter('edge') },
+            { label: 'Oil Paint', fn: () => app.applyFilter('oil') },
+            { label: 'Clouds…', fn: () => app.effectDialog('clouds') },
+            { label: 'Vignette…', fn: () => app.effectDialog('vignette') }
+          ]
+        },
+        {
+          label: 'Other',
+          sub: [
+            { label: 'Minimum…', fn: () => app.effectDialog('minimum') },
+            { label: 'Maximum…', fn: () => app.effectDialog('maximum') },
+            { label: 'High Pass…', fn: () => app.effectDialog('highPass') }
+          ]
+        },
+        { hr: true },
+        { label: 'Black & White', fn: () => app.applyFilter('grayscale') },
+        { label: 'Invert', fn: () => app.applyFilter('invert') },
+        { label: 'Sepia', fn: () => app.applyFilter('sepia') },
+        { label: 'Posterize…', fn: () => app.effectDialog('posterize') },
+        { label: 'Threshold…', fn: () => app.effectDialog('threshold') }
+      ]
     },
     {
       name: 'View',
@@ -236,7 +356,7 @@ export function buildMenus(app) {
         { label: 'Color', check: true, on: app.panels.color, fn: () => app.togglePanel('color') },
         { label: 'Swatches', check: true, on: app.panels.swatches, fn: () => app.togglePanel('swatches') },
         { label: 'Glyphs', fn: () => app.toast('Glyphs panel is not available') },
-        { label: 'Histogram', fn: () => app.toast('Histogram panel is not available') },
+        { label: 'Histogram', check: true, on: app.panels.histogram, fn: () => app.togglePanel('histogram') },
         { label: 'History', check: true, on: app.panels.history, fn: () => app.togglePanel('history') },
         { label: 'Info', check: true, on: app.panels.info, fn: () => app.togglePanel('info') },
         { label: 'Layers', check: true, on: app.panels.layers, fn: () => app.togglePanel('layers') },
@@ -377,7 +497,7 @@ export function renderOptions(app) {
   const tool = app.tool
   const meta = toolById(tool)
   const parts = [`<div class="opt"><b>${meta?.label || tool}</b></div><div class="sep"></div>`]
-  const sizeTools = ['brush', 'pencil', 'eraser', 'clone', 'blur', 'sharpen', 'smudge', 'dodge', 'burn', 'heal', 'pen', 'shape', 'ellipse', 'line', 'poly', 'history-brush']
+  const sizeTools = ['brush', 'pencil', 'eraser', 'clone', 'blur', 'sharpen', 'smudge', 'dodge', 'burn', 'heal', 'red-eye', 'pen', 'shape', 'round-rect', 'ellipse', 'triangle', 'line', 'poly', 'history-brush']
 
   if (tool === 'history-brush') {
     parts.push(`<div class="opt">Paint to restore pixels from the original history state</div>`)
@@ -393,7 +513,7 @@ export function renderOptions(app) {
     parts.push(`<div class="opt"><label>Hardness</label><input id="opt-hard" type="range" min="0" max="100" value="${s.hardness}"></div>`)
     parts.push(`<div class="opt"><label>Opacity</label><input id="opt-op" type="range" min="1" max="100" value="${s.opacity}"></div>`)
   }
-  if (['shape', 'ellipse', 'line', 'poly'].includes(tool)) {
+  if (['shape', 'round-rect', 'ellipse', 'triangle', 'line', 'poly'].includes(tool)) {
     parts.push(`<div class="opt"><label><input id="opt-fill" type="checkbox"${s.fillOn ? ' checked' : ''}> Fill</label></div>`)
     parts.push(`<div class="opt"><label><input id="opt-stroke" type="checkbox"${s.strokeOn ? ' checked' : ''}> Stroke</label></div>`)
   }
@@ -445,6 +565,7 @@ export function renderOptions(app) {
   if (tool === 'fill') parts.push(`<div class="opt">Click an area to fill with foreground</div>`)
   if (tool === 'eyedropper') parts.push(`<div class="opt">Click: foreground · Shift-click: background</div>`)
   if (tool === 'heal') parts.push(`<div class="opt">Paint over spots to blend them</div>`)
+  if (tool === 'red-eye') parts.push(`<div class="opt">Paint over red-eye to neutralize the red channel</div>`)
 
   bar.innerHTML = parts.join('')
   bar.querySelector('#opt-size')?.addEventListener('input', e => { s.brushSize = +e.target.value; renderOptions(app) })
@@ -499,12 +620,12 @@ function showLayerMenu(app, i, x, y) {
   menu.style.left = x + 'px'
   menu.style.top = y + 'px'
   const items = [
-    ['New Layer', () => { app.doc.addLayer(); app.doc.pushHistory('New Layer') }],
+    ['New Layer', () => { app.doc.addBlankLayer(); app.doc.pushHistory('New Layer') }],
     ['Duplicate Layer', () => app.doc.duplicateLayer()],
     ['Delete Layer', () => app.doc.deleteLayer()],
     null,
-    ['Group Layers', () => app.doc.groupSelected()],
-    layer?.kind === 'group' ? ['Ungroup Layers', () => app.doc.ungroup(i)] : null,
+    ['Group Layers', () => app.doc.groupAll()],
+    ['Ungroup Layers', () => app.doc.ungroup()],
     null,
     ['Add Layer Mask', () => app.doc.addMask()],
     layer?.mask ? ['Delete Layer Mask', () => app.doc.deleteMask()] : null,
@@ -648,7 +769,9 @@ export function renderLayers(app) {
     li.appendChild(mid)
     const flags = document.createElement('span')
     flags.className = 'lock'
-    flags.title = layer.lockPos ? 'Background (fixed)' : (layer.locked ? 'Locked' : '')
+    flags.title = layer.locked && layer.lockPos
+      ? 'Layer fixed — color and position locked'
+      : layer.lockPos ? 'Position locked (fixed)' : (layer.locked ? 'Color locked' : '')
     if (layer.lockPos || layer.locked) {
       flags.innerHTML = '<svg viewBox="0 0 12 14" width="10" height="12" aria-hidden="true"><path d="M6 0a4 4 0 0 0-4 4v2H1v8h10V6H9V4a3 3 0 0 0-3-3zm0 1.5A2.5 2.5 0 0 1 8.5 4v2h-5V4A2.5 2.5 0 0 1 6 1.5z" fill="currentColor"/></svg>'
     } else if (layer.lockTrans) {
